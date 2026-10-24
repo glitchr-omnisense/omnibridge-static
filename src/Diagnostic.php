@@ -35,6 +35,10 @@ final class Diagnostic implements \JsonSerializable
     public const QUERY_IGNORED = 'query-ignored';
     /** A link left to the dynamic host (Site::dynamic()). */
     public const DYNAMIC = 'dynamic';
+    /** An internal address of a written file that points outside the site's base path (Site::basePath()). */
+    public const OUTSIDE_BASE = 'outside-base';
+    /** What GitHub Pages will not serve as the export expects (no 404 page, a file or a site above its limits). */
+    public const GITHUB_PAGES = 'github-pages';
 
     public function __construct(
         public readonly string $level,

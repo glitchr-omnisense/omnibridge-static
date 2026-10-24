@@ -4,6 +4,7 @@ namespace Omnibridge\Static;
 
 use Omnibridge\Static\Asset\AssetManifest;
 use Omnibridge\Static\Link\Links;
+use Omnibridge\Static\Output\BasePath;
 use Omnibridge\Static\Output\OutputPath;
 use Omnibridge\Static\Route\SkipReportingInterface;
 
@@ -17,6 +18,12 @@ use Omnibridge\Static\Route\SkipReportingInterface;
  * small pages, _redirects and redirects.json; 404.html; sitemap.xml; and
  * omnibridge-static.json, the report (files and checksums, pages,
  * redirections, diagnostics).
+ *
+ * A site served under a folder of its origin (Site::basePath()) is rendered
+ * at the root and its written files' internal addresses are then moved under
+ * the folder (Output\BasePath); any left outside it is an error. For GitHub
+ * Pages (Site::githubPages()): .nojekyll, CNAME for a custom domain, the
+ * redirections as pages only.
  *
  *     $report = (new Exporter())->export($site, __DIR__.'/dist');
  *     exit($report->hasErrors() ? 1 : 0);
@@ -33,7 +40,12 @@ final class Exporter
 
     private const SKIPPED_SCHEMES = '~^(mailto|tel|sms|javascript|data|blob|about|geo|callto|file):~i';
 
+    /** GitHub Pages' limits: a published site of at most 1 GB, and files of at most 100 MB in its repository. */
+    private const PAGES_SITE_LIMIT = 1024 ** 3;
+    private const PAGES_FILE_LIMIT = 100 * 1024 ** 2;
+
     private Site $site;
+    private BasePath $base;
     private string $out;
     /** @var list<Diagnostic> */
     private array $diagnostics = [];
@@ -66,6 +78,7 @@ final class Exporter
     public function export(Site $site, string $outDir, bool $verify = false): Report
     {
         $this->site = $site;
+        $this->base = new BasePath($site->origin(), $site->basePath());
         $this->out = rtrim($outDir, '/');
         $this->diagnostics = $this->written = $this->served = $this->pages = $this->redirects = $this->documents = $this->broken = $this->dynamicLinks = $this->queryIgnored = $this->sitemapPages = $this->pageKeys = [];
 
@@ -92,6 +105,7 @@ final class Exporter
             $this->sitemap();
         }
         $this->writeRedirects();
+        $this->publish();
 
         $report = new Report($site->baseUrl, $this->checksums(), self::sorted($this->pages), self::sorted($this->redirects), $this->diagnostics);
         file_put_contents($this->out.'/'.self::REPORT, $report->toJson());
@@ -158,7 +172,7 @@ final class Exporter
                 continue;
             }
             foreach ($paths as $path) {
-                if (!$this->copyPublic($path)) {
+                if (!$this->copyPublic($this->base->strip($path))) {
                     $this->diagnostics[] = Diagnostic::error(Diagnostic::MISSING_ASSET, $path, \sprintf('named by %s, not in the public folder', basename($manifest)));
                 }
             }
@@ -354,9 +368,11 @@ final class Exporter
         $this->redirects[$page->path] = ['to' => $target, 'status' => $response->status];
 
         $escaped = htmlspecialchars($target, \ENT_QUOTES | \ENT_HTML5, 'UTF-8');
-        $stub = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>'.$escaped.'</title>'
+        // The addresses are moved under the base path with the other pages' (publish()); the text shows where it goes.
+        $shown = htmlspecialchars($this->publicAddress($target), \ENT_QUOTES | \ENT_HTML5, 'UTF-8');
+        $stub = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>'.$shown.'</title>'
             .'<meta http-equiv="refresh" content="0; url='.$escaped.'"><link rel="canonical" href="'.$escaped.'"><meta name="robots" content="noindex">'
-            .'</head><body><a href="'.$escaped.'">'.$escaped.'</a></body></html>'."\n";
+            .'</head><body><a href="'.$escaped.'">'.$shown.'</a></body></html>'."\n";
         try {
             $file = OutputPath::page($page->path);
         } catch (\InvalidArgumentException $e) {
@@ -547,7 +563,8 @@ final class Exporter
             return null;
         }
 
-        return OutputPath::resolve($from, $reference);
+        // An address under the base path already (an application that knows it): the address it renders.
+        return $this->base->strip(OutputPath::resolve($from, $reference));
     }
 
     private function sitemap(): void
@@ -584,14 +601,109 @@ final class Exporter
         if (!$this->redirects) {
             return;
         }
-        $redirects = self::sorted($this->redirects);
+        // The addresses a visitor asks for: under the base path.
+        $redirects = [];
+        foreach (self::sorted($this->redirects) as $from => $redirect) {
+            $redirects[$this->publicAddress($from)] = ['to' => $this->publicAddress($redirect['to']), 'status' => $redirect['status']];
+        }
         $lines = '';
         foreach ($redirects as $from => $redirect) {
             $lines .= $from.' '.$redirect['to'].' '.$redirect['status']."\n";
         }
-        // Netlify's and Cloudflare Pages' format; redirects.json for any other host's configuration.
-        $this->write('_redirects', $lines, 'the redirections');
+        // Netlify's and Cloudflare Pages' format (GitHub Pages reads none: the small pages redirect there);
+        // redirects.json for any other host's configuration.
+        if (!$this->site->isForGitHubPages()) {
+            $this->write('_redirects', $lines, 'the redirections');
+        }
         $this->write('redirects.json', json_encode($redirects, \JSON_PRETTY_PRINT | \JSON_UNESCAPED_SLASHES | \JSON_UNESCAPED_UNICODE | \JSON_THROW_ON_ERROR)."\n", 'the redirections');
+    }
+
+    /** A root-relative address as a visitor asks for it: under the base path. */
+    private function publicAddress(string $address): string
+    {
+        return str_starts_with($address, '/') && !str_starts_with($address, '//') ? $this->base->prefix($address) : $address;
+    }
+
+    /**
+     * The export made servable where it is published: the internal addresses of the written files moved
+     * under the base path (and 404.html's relative ones resolved, since it is served at any depth), the files
+     * GitHub Pages reads, and every file checked for addresses left outside the base path.
+     */
+    private function publish(): void
+    {
+        $notFound = $this->site->notFoundPage();
+        $resources = $this->site->getResourceAttributes();
+        $exported = fn (string $path): bool => '' !== ($this->served[OutputPath::key($path)] ?? '');
+        $own = ['_redirects', 'redirects.json'];
+        // The page for unknown addresses is served at any depth; on GitHub Pages every page may be served at
+        // its address with a slash added (it redirects /a/b to /a/b/ when a/b/index.html is the file): their
+        // relative addresses are resolved against the address they were rendered at.
+        $addresses = [];
+        foreach ($this->documents as [$file, $address, $kind]) {
+            if ('html' === $kind && ($this->site->isForGitHubPages() || '404.html' === $file)) {
+                $addresses[$file] ??= $address;
+            }
+        }
+        foreach (array_keys($this->written) as $file) {
+            $kind = BasePath::kind($file);
+            $resolveFrom = BasePath::HTML === $kind ? $addresses[$file] ?? null : null;
+            if (null === $kind || \in_array($file, $own, true) || ($this->base->isRoot() && null === $resolveFrom)) {
+                continue;
+            }
+            $path = $this->out.'/'.$file;
+            $body = (string) file_get_contents($path);
+            try {
+                $moved = $this->base->apply($kind, $body, $exported, $resolveFrom, $resources);
+            } catch (\RuntimeException $e) {
+                $this->diagnostics[] = Diagnostic::error(Diagnostic::OUTSIDE_BASE, $file, 'its addresses could not be moved under the base path: '.$e->getMessage());
+                continue;
+            }
+            if ($moved !== $body) {
+                file_put_contents($path, $moved);
+            }
+        }
+
+        if ($this->site->isForGitHubPages()) {
+            // No Jekyll: files and folders whose name starts with "_" are served as they are.
+            $this->write('.nojekyll', '', 'GitHub Pages');
+            if (null !== $domain = $this->site->customDomain()) {
+                $this->write('CNAME', $domain."\n", 'GitHub Pages (the custom domain)');
+            }
+            if (null === $notFound) {
+                $this->diagnostics[] = Diagnostic::warning(Diagnostic::GITHUB_PAGES, '404.html', 'no page for unknown addresses (Site::notFound()): GitHub Pages shows its own');
+            }
+            $total = 0;
+            foreach (array_keys($this->written) as $file) {
+                $size = (int) filesize($this->out.'/'.$file);
+                $total += $size;
+                if ($size > self::PAGES_FILE_LIMIT) {
+                    $this->diagnostics[] = Diagnostic::warning(Diagnostic::GITHUB_PAGES, $file, \sprintf('%d MB: above the 100 MB GitHub accepts for a file', intdiv($size, 1024 ** 2)));
+                }
+            }
+            if ($total > self::PAGES_SITE_LIMIT) {
+                $this->diagnostics[] = Diagnostic::warning(Diagnostic::GITHUB_PAGES, $this->site->baseUrl, \sprintf('%d MB: above the 1 GB a GitHub Pages site may be', intdiv($total, 1024 ** 2)));
+            }
+        }
+
+        if ($this->base->isRoot()) {
+            return;
+        }
+        $written = array_keys($this->written);
+        sort($written, \SORT_STRING);
+        foreach ($written as $file) {
+            $kind = BasePath::kind($file);
+            if (null === $kind) {
+                continue;
+            }
+            try {
+                $escapes = $this->base->escapes($kind, (string) file_get_contents($this->out.'/'.$file), $exported, $resources);
+            } catch (\RuntimeException $e) {
+                $escapes = ['(unreadable: '.$e->getMessage().')'];
+            }
+            if ($escapes) {
+                $this->diagnostics[] = Diagnostic::error(Diagnostic::OUTSIDE_BASE, $file, $this->base->describe($escapes));
+            }
+        }
     }
 
     private function write(string $file, string $body, string $owner): bool

@@ -147,7 +147,8 @@ twice) and a page-by-page comparison with the dynamic site find these.
   twice a warning (`duplicate-page`), a page that is neither HTML nor a path
   with an extension an error (`not-exportable`).
 - A redirection is a small page (meta refresh and canonical link) and a line
-  of `_redirects` (Netlify, Cloudflare Pages) and `redirects.json`.
+  of `_redirects` (Netlify, Cloudflare Pages; not for GitHub Pages, which
+  reads none) and `redirects.json`.
 - The page for unknown addresses (`Site::notFound()`) is `404.html`.
 - Every internal link of the written pages and style sheets is followed: to a
   page or file of the export, to a file of the public folder (copied, symbolic
@@ -155,7 +156,8 @@ twice) and a page-by-page comparison with the dynamic site find these.
   style sheet's own links followed in turn), and otherwise reported
   (`broken-link`, with the first page that links to it and how many more).
   Read: `href` of links, `action` of forms, `src`, `srcset`, `poster`, the lazy
-  loaders' `data-src` / `data-srcset` / `data-poster`, `<link href>`, `url()` and
+  loaders' `data-src` / `data-srcset` / `data-poster`, `<link href>`, an SVG's
+  `<use href>` and `<image href>`, a `<meta http-equiv="refresh">`, `url()` and
   `@import`, and the attributes `Site::resourceAttributes()` adds (a gallery's
   `data-thumb`). Not read: what a script builds at run time. URI templates
   (`/tiles/{z}.png`) are no addresses.
@@ -173,6 +175,100 @@ twice) and a page-by-page comparison with the dynamic site find these.
   build that stops half-way leaves the folder marked, and the next replaces it;
   a folder holding anything else is refused.
 
+## Deploying to GitHub Pages
+
+GitHub Pages serves a project site under a folder of its owner's origin
+(`https://<owner>.github.io/<repository>/`), a user or organisation site and
+a custom domain at the root. Give the site its public address and the
+target:
+
+```php
+return (new Site(getenv('SITE_URL') ?: 'https://owner.github.io/repository/'))
+    // ... providers, renderer, assets, as anywhere
+    ->notFound('/404')
+    ->githubPages();              // or: omnibridge-static build site.php --target=github-pages
+```
+
+- **The base path.** The application renders its pages at the root of the
+  origin, as it always does (`RequestRenderer` given the origin, not the
+  folder: `(new Site($url))->origin()`). Once the pages are written, every
+  internal address of the export is moved under the folder (`Output\BasePath`):
+  in HTML every address the exporter reads (links, forms, `src`, `srcset`,
+  `poster`, `<link>`, a style's `url()`, a refresh, the
+  `Site::resourceAttributes()` attributes - a search page's index URL), in
+  style sheets their `url()` and `@import`, in JSON the strings that are the
+  root-relative address of a page or file of the export, and everywhere (HTML,
+  CSS, JSON, feeds, `sitemap.xml`, `robots.txt`) the absolute URLs of the
+  origin - canonical and `hreflang` links, Open Graph, JSON-LD, a share link's
+  percent-encoded URL. `sitemap.xml` and the redirection pages are written at
+  the base URL. An address already under the folder is left as it is (an
+  application that knows its base path writes them so).
+- **404.html** at the root of the export, which Pages serves for any unknown
+  address under the site: its relative addresses are resolved against the
+  address it was rendered at (it answers at any depth). Pages also answers
+  `/a/b` with a redirection to `/a/b/` when `a/b/index.html` is the file, so
+  every page's relative addresses are resolved too.
+- **`.nojekyll`** (no Jekyll: files and folders starting with `_` are served),
+  **`CNAME`** when the base URL's host is a custom domain (a custom domain is
+  served at its root: a base URL with a path and a custom domain is refused).
+- **Redirections** as small pages only: Pages reads no `_redirects`
+  (`redirects.json` stays, at the public addresses).
+- **The check.** Every written HTML, CSS, JSON, XML and text file is read
+  again: an address left outside the folder is an error (`outside-base`), and
+  `omnibridge-static check dist` runs the same check on a folder before it is
+  published. A warning (`github-pages`) when there is no page for unknown
+  addresses, a file above 100 MB or a site above 1 GB.
+- **Not moved:** what a script builds at run time (`fetch("/api")` in a
+  script). A script reads its addresses from the page - a `data-` attribute
+  named by `Site::resourceAttributes()`, `document.baseURI` - or from a
+  bundler's public path that names the folder.
+
+The workflow (a repository whose Settings → Pages → Source is "GitHub
+Actions"):
+
+```yaml
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    permissions: { contents: read, pages: read }
+    steps:
+      - uses: actions/checkout@v4
+      - id: pages
+        uses: actions/configure-pages@v6
+      # ... PHP, dependencies
+      - run: vendor/bin/omnibridge-static build site.php --out=dist --target=github-pages --strict
+        env:
+          SITE_URL: ${{ vars.SITE_URL || steps.pages.outputs.base_url }}
+      - run: vendor/bin/omnibridge-static check dist
+      - uses: actions/upload-pages-artifact@v5
+        with: { path: dist, include-hidden-files: true }   # .nojekyll
+  deploy:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions: { pages: write, id-token: write }
+    environment: { name: github-pages, url: '${{ steps.deployment.outputs.page_url }}' }
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5
+```
+
+(Pin the actions by commit SHA in a real workflow.) To try the folder
+locally, mount the export under it and serve it as Pages does - a folder
+redirected to its address with a slash, `404.html` for the rest:
+
+```nginx
+server {
+    listen 80;
+    root /srv/www;                 # the export mounted at /srv/www/repository
+    index index.html;
+    absolute_redirect off;
+    location / { }
+    error_page 404 /repository/404.html;
+}
+```
+
 ## The Symfony and Artisan commands
 
 Thin wrappers over the same `Console\Cli`, each in its host's bridge and
@@ -187,9 +283,21 @@ registered only when this package is installed:
 
 Verified (2026-10-24):
 
-- The suite: 54 tests (contracts, providers, renderers, links, manifests, the
-  exporter, the command line and the plain script without Composer, the
-  example), PHP 8.2; PHPStan at max, no baseline entry.
+- The suite: 71 tests (contracts, providers, renderers, links, manifests, the
+  exporter, the base path and the GitHub Pages target, the command line and
+  the plain script without Composer, the example), PHP 8.2; PHPStan at max,
+  no baseline entry.
+- GitHub Pages (2026-10-24): the Omniscient website (Symfony, omnibase 4, its
+  `static.php`) built for `https://glitchr-studio.github.io/omniscient/`:
+  1419 pages, 2254 files, 612 redirections, 47 MB, no diagnostic, no address
+  outside `/omniscient/`; two builds identical (`diff -r`); its root build
+  unchanged but for the pages whose text changed. Served under `/omniscient/`
+  by an nginx that answers as Pages does (folders redirected to a slash,
+  404.html), headless Chrome on 10 pages at two widths and both colour
+  schemes (landing in two languages, a guide, the package list and a
+  package, a manual page, the news, the search with its index, 404.html at
+  one and four levels): no console error, no failed request, no request nor
+  link outside the folder. Not deployed: the repository is not created yet.
 - Les Ringo Stars (Symfony, omnibase 4): its public pages - the shared actions
   of `src/Action`, enumerated from Symfony's router with the values of their
   parameters read from the database - rendered by its own kernel: 243 pages,
@@ -226,8 +334,14 @@ Not done, or not verified:
   full, clean build.
 - Assets are copied as the bundler fingerprinted them; the exporter
   fingerprints nothing itself, and records each file's checksum.
-- A site at a sub-path of its origin (`https://example.org/blog/`) is not
-  supported: the export is at the root of its origin.
+- A site under a folder of its origin moves what the export reads and the
+  origin's absolute URLs; an inline script's root-relative strings
+  (`fetch("/api")`) are not read, and neither the export nor its check sees
+  them. Same-origin absolute URLs are all taken for the site's own: another
+  project site of the same `<owner>.github.io` linked absolutely would be
+  moved under the folder too.
+- GitHub Pages' own behaviour (the slash redirection, 404.html at any depth)
+  was reproduced with nginx, not observed on Pages.
 - Neither wrapper has run from an installed package (omnibridge/static is not
   yet on Packagist); the Laravel command has not exported a whole site.
 - The dev environment's 404 page is Symfony's exception page, which differs

@@ -70,4 +70,25 @@ final class LinksTest extends TestCase
 
         self::assertSame('<a class="x" href="https://app.example.org/login">Sign in</a><link href="/login"><form method="post" action="https://app.example.org/newsletter"></form><script>"<a href=\"/login\">"</script><a href="/about">About</a>', $rewritten);
     }
+
+    public function testARefreshAndAnSvgsReferencesAreRead(): void
+    {
+        self::assertSame([
+            [Links::PAGE, '/new'],
+            [Links::RESOURCE, '/sprite.svg#a'],
+            [Links::RESOURCE, '/b.png'],
+        ], Links::html('<meta http-equiv="Refresh" content="0; URL=\'/new\'"><meta name="x" content="0; url=/no"><svg><use xlink:href="/sprite.svg#a"/><image href="/b.png"/></svg>'));
+    }
+
+    public function testEveryAddressReadCanBeRewritten(): void
+    {
+        $html = '<link rel="preload" as="image" imagesrcset="/a.png 1x, /b.png 2x"><script src="/app.js">fetch("/api")</script><style>p { background: url(/c.png) }</style>'
+            .'<meta http-equiv="refresh" content="0; url=/new"><a href="/x" title="/x">x</a><a href="  /y ">y</a><form method="post"></form><img data-thumb="/t.png" src=/i.png alt="">';
+
+        $rewritten = Links::rewriteAddresses($html, static fn (string $address, string $kind): ?string => str_starts_with($address, '/') ? '/base'.$address : null, ['data-thumb']);
+
+        self::assertSame('<link rel="preload" as="image" imagesrcset="/base/a.png 1x, /base/b.png 2x"><script src="/base/app.js">fetch("/api")</script><style>p { background: url(/base/c.png) }</style>'
+            .'<meta http-equiv="refresh" content="0; url=/base/new"><a href="/base/x" title="/x">x</a><a href="/base/y">y</a><form method="post"></form><img data-thumb="/base/t.png" src="/base/i.png" alt="">', $rewritten);
+        self::assertSame($html, Links::rewriteAddresses($html, static fn (string $address): ?string => null), 'nothing changed, byte for byte');
+    }
 }

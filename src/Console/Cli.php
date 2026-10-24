@@ -4,6 +4,8 @@ namespace Omnibridge\Static\Console;
 
 use Omnibridge\Static\Diagnostic;
 use Omnibridge\Static\Exporter;
+use Omnibridge\Static\Output\BasePath;
+use Omnibridge\Static\Output\OutputPath;
 use Omnibridge\Static\Report;
 use Omnibridge\Static\Site;
 
@@ -12,15 +14,17 @@ use Omnibridge\Static\Site;
  * command and the artisan command of omnibridge/symfony and omnibridge/laravel
  * call with their host:
  *
- *     omnibridge-static build static.php [--out=dist] [--verify] [--strict] [--quiet]
+ *     omnibridge-static build static.php [--out=dist] [--target=github-pages] [--verify] [--strict] [--quiet]
  *     omnibridge-static check dist
  *
  * build: the site the file declares (it returns a Site, or a closure that
  * takes the host's offer - Cli::HOST_* - and returns one) exported to --out;
  * the exit code is 1 when there is an error (with --strict, a warning too).
+ * --target=github-pages exports for GitHub Pages (Site::githubPages()).
  * check: an export's files against its omnibridge-static.json (each there,
- * the same checksum, nothing more) - what a deployment step runs before it
- * publishes.
+ * the same checksum, nothing more) and, for a site under a folder of its
+ * origin, no internal address outside that folder - what a deployment step
+ * runs before it publishes.
  */
 final class Cli
 {
@@ -99,6 +103,11 @@ final class Cli
     {
         $quiet = isset($options['quiet']);
         $site = self::load($file, $host);
+        match ($options['target'] ?? null) {
+            null => null,
+            'github-pages' => $site->githubPages(),
+            default => throw new \InvalidArgumentException(\sprintf('Unknown target "%s" (github-pages).', \is_string($options['target']) ? $options['target'] : '')),
+        };
         $out = \is_string($options['out'] ?? null) ? $options['out'] : 'dist';
         $report = (new Exporter($quiet ? null : fn (string $line) => $this->line($line)))->export($site, $out, isset($options['verify']));
         $this->summary($report, $quiet);
@@ -133,6 +142,11 @@ final class Cli
                 }
             }
         }
+        if (\is_array($report) && \is_string($report['baseUrl'] ?? null)) {
+            foreach ($this->escapes($folder, $report['baseUrl'], array_map(strval(...), array_keys($files))) as $problem) {
+                $problems[] = $problem;
+            }
+        }
         sort($problems);
         foreach ($problems as $problem) {
             $this->line($problem);
@@ -140,6 +154,43 @@ final class Cli
         $this->line(\sprintf('%d files checked, %d problems', \count($files), \count($problems)));
 
         return $problems ? 1 : 0;
+    }
+
+    /**
+     * The files of an export with addresses outside its base path.
+     *
+     * @param list<string> $files
+     *
+     * @return list<string>
+     */
+    private function escapes(string $folder, string $baseUrl, array $files): array
+    {
+        $site = new Site($baseUrl);
+        $base = new BasePath($site->origin(), $site->basePath());
+        if ($base->isRoot()) {
+            return [];
+        }
+        $listed = array_fill_keys($files, true);
+        $exported = static function (string $path) use ($listed): bool {
+            try {
+                return isset($listed[OutputPath::page($path)]) || (OutputPath::hasExtension($path) && isset($listed[OutputPath::file($path)]));
+            } catch (\InvalidArgumentException) {
+                return false;
+            }
+        };
+        $problems = [];
+        foreach ($files as $file) {
+            $kind = BasePath::kind($file);
+            if (null === $kind || !is_file($folder.'/'.$file)) {
+                continue;
+            }
+            $escapes = $base->escapes($kind, (string) file_get_contents($folder.'/'.$file), $exported);
+            if ($escapes) {
+                $problems[] = 'outside the base path: '.$file.': '.$base->describe($escapes);
+            }
+        }
+
+        return $problems;
     }
 
     private function summary(Report $report, bool $quiet): void
@@ -156,7 +207,7 @@ final class Cli
 
     private function usage(): int
     {
-        $this->line('omnibridge-static build <site.php> [--out=dist] [--verify] [--strict] [--quiet]');
+        $this->line('omnibridge-static build <site.php> [--out=dist] [--target=github-pages] [--verify] [--strict] [--quiet]');
         $this->line('omnibridge-static check <dist>');
 
         return 2;

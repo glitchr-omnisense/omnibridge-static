@@ -4,7 +4,8 @@ namespace Omnibridge\Static;
 
 /**
  * What a site exports, declared once (the file the CLI reads returns it):
- * the public origin, the providers of its addresses, its renderer, its
+ * the public address (an origin, or a folder of one: basePath()), the
+ * providers of its addresses, its renderer, its
  * public folder and asset manifests, the page a static host shows for an
  * unknown address, the addresses that stay on the dynamic host, and the
  * normalisers that take out of a page what changes at every request.
@@ -50,16 +51,64 @@ final class Site
     /** @var list<string> */
     private array $resourceAttributes = [];
 
-    /** @param string $baseUrl the public origin of the static site ("https://example.org"): the sitemap's addresses, the links taken for internal */
+    private bool $githubPages = false;
+
+    private string $basePath;
+
+    /**
+     * @param string $baseUrl the public address of the static site: its origin ("https://example.org"), or the
+     *                        folder of an origin it is served under ("https://owner.github.io/repository/") -
+     *                        the sitemap's addresses, the links taken for internal, and the base path every
+     *                        internal address of the export is moved under (Output\BasePath)
+     */
     public function __construct(public readonly string $baseUrl)
     {
         $parts = parse_url($baseUrl);
         if (false === $parts || !isset($parts['scheme'], $parts['host']) || isset($parts['query']) || isset($parts['fragment'])) {
-            throw new \InvalidArgumentException(\sprintf('A site\'s base URL is an origin ("https://example.org"), "%s" is not.', $baseUrl));
+            throw new \InvalidArgumentException(\sprintf('A site\'s base URL is an origin ("https://example.org") or a folder of one ("https://owner.github.io/repository/"), "%s" is not.', $baseUrl));
         }
-        if ('' !== trim($parts['path'] ?? '', '/')) {
-            throw new \InvalidArgumentException(\sprintf('A site is exported at the root of its origin; "%s" has a path.', $baseUrl));
+        $path = trim($parts['path'] ?? '', '/');
+        if ('' !== $path && !preg_match('#^[A-Za-z0-9._~!$&\'()*+,;=:@%-]+(?:/[A-Za-z0-9._~!$&\'()*+,;=:@%-]+)*$#', $path) || preg_match('~(^|/)\.\.?(/|$)~', $path)) {
+            throw new \InvalidArgumentException(\sprintf('The path of the base URL "%s" is no folder.', $baseUrl));
         }
+        $this->basePath = '' === $path ? '' : '/'.$path;
+    }
+
+    /**
+     * The folder of its origin the site is served under, without its trailing slash ("/repository"), or ""
+     * at the root. The application renders its pages at the root; the export moves every internal address
+     * under this folder (Output\BasePath).
+     */
+    public function basePath(): string
+    {
+        return $this->basePath;
+    }
+
+    /**
+     * Exported for GitHub Pages: .nojekyll written; a CNAME file when the base URL's host is a custom domain
+     * (not <owner>.github.io); the redirections as pages only (Pages reads no _redirects); 404.html expected;
+     * every internal address of the export checked to stay under the base path (an error otherwise); Pages'
+     * limits on a file's and the site's size warned of.
+     */
+    public function githubPages(bool $githubPages = true): self
+    {
+        if ($githubPages && '' !== $this->basePath && !self::isGitHubHost($this->host())) {
+            throw new \InvalidArgumentException(\sprintf('GitHub Pages serves a custom domain at its root: "%s" has a path.', $this->baseUrl));
+        }
+        $this->githubPages = $githubPages;
+
+        return $this;
+    }
+
+    public function isForGitHubPages(): bool
+    {
+        return $this->githubPages;
+    }
+
+    /** The custom domain GitHub Pages serves the site at (its CNAME file), or null on <owner>.github.io. */
+    public function customDomain(): ?string
+    {
+        return self::isGitHubHost($this->host()) ? null : $this->host();
     }
 
     /** The scheme, host and port of the base URL ("https://example.org:8443"). */
@@ -71,6 +120,16 @@ final class Site
         $port = \is_int($parts['port'] ?? null) ? ':'.$parts['port'] : '';
 
         return $scheme.'://'.$host.$port;
+    }
+
+    private function host(): string
+    {
+        return strtolower((string) parse_url($this->baseUrl, \PHP_URL_HOST));
+    }
+
+    private static function isGitHubHost(string $host): bool
+    {
+        return str_ends_with($host, '.github.io');
     }
 
     public function provide(StaticRouteProviderInterface ...$providers): self

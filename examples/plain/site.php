@@ -44,6 +44,7 @@ $render = static function (StaticPage $page) use ($posts, $view): ?StaticRespons
     return StaticResponse::notFound($view('not-found', []));
 };
 
+// STATIC_ORIGIN: its public address, an origin or a folder of one (https://owner.github.io/example/).
 return (new Site(getenv('STATIC_ORIGIN') ?: 'https://example.org'))
     ->provide(new PageList(['/', '/old-blog', ...array_map(static fn (string $slug) => '/posts/'.$slug, array_keys($posts))]))
     ->renderWith(new CallableRenderer($render))
