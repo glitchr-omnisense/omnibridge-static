@@ -1,0 +1,11 @@
+# PHPStan at the highest level, as the family's other packages. phpstan-baseline.neon lists the
+# violations there were when the CI started: none (the CI fails on any).
+includes:
+    - phpstan-baseline.neon
+
+parameters:
+    level: max
+    paths:
+        - src
+        - tests
+    reportUnmatchedIgnoredErrors: false

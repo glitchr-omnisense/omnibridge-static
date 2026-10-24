@@ -1,0 +1,58 @@
+{
+    "name": "omnibridge/static",
+    "description": "The static host of the omnibridge family: a generic exporter that enumerates an application's addresses (explicit lists, a router's #[Route] routes with the values of their parameters, a sitemap), renders each at build time by the application's own code (its host's request handling, its actions, or any callable), and writes a deterministic folder for a static host or a CDN - HTML pages, the files of an asset manifest (Vite, Webpack), the files the pages refer to, redirections, 404.html, sitemap.xml and a report with checksums and diagnostics (broken links, duplicate outputs, missing assets, non-deterministic pages). No framework, no bundler.",
+    "type": "library",
+    "keywords": [
+        "omnibridge",
+        "static-site",
+        "export",
+        "framework-agnostic",
+        "symfony",
+        "laravel"
+    ],
+    "homepage": "https://github.com/glitchr-studio/omnibridge-static",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Marco Meyer"
+        }
+    ],
+    "require": {
+        "php": ">=8.2"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^11.5",
+        "psr/container": "^1.1|^2.0",
+        "symfony/http-foundation": "^6.4|^7.0|^8.0",
+        "symfony/routing": "^6.4|^7.0|^8.0"
+    },
+    "suggest": {
+        "symfony/routing": "Route\\RouteCollectionProvider: the pages of a router's routes (Symfony's router, omnibridge/laravel's Routing\\ActionRoutes, symfony/routing's attribute loader)",
+        "symfony/http-foundation": "Render\\RequestRenderer: pages rendered through a host's own request handling (Symfony's kernel, Laravel's)",
+        "psr/container": "Render\\ActionRenderer: pages rendered by calling the route's action, taken from a PSR-11 container"
+    },
+    "autoload": {
+        "psr-4": {
+            "Omnibridge\\Static\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Omnibridge\\Static\\Tests\\": "tests/"
+        }
+    },
+    "bin": [
+        "bin/omnibridge-static"
+    ],
+    "extra": {
+        "branch-alias": {
+            "dev-1.x": "1.x-dev"
+        }
+    },
+    "config": {
+        "sort-packages": true
+    },
+    "scripts": {
+        "test": "phpunit"
+    }
+}

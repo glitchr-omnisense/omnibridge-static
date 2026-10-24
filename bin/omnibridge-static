@@ -1,0 +1,31 @@
+#!/usr/bin/env php
+<?php
+
+/*
+ * omnibridge/static's command line, plain PHP:
+ *
+ *     vendor/bin/omnibridge-static build static.php --out=dist
+ *     vendor/bin/omnibridge-static check dist
+ *
+ * The site's file (static.php) declares what is exported and returns an
+ * Omnibridge\Static\Site; it loads the application it renders (its autoloader,
+ * its kernel) itself. Run from a checkout that no Composer project installed,
+ * this script loads the package's own classes, and the site's file the
+ * application's autoloader.
+ */
+
+// Installed by Composer: the project's autoloader. Not the package's own vendor/ (its test tools), which
+// would stand beside the application's.
+if (is_file(__DIR__.'/../../../autoload.php')) {
+    require __DIR__.'/../../../autoload.php';
+}
+spl_autoload_register(static function (string $class): void {
+    if (str_starts_with($class, 'Omnibridge\\Static\\')) {
+        $file = __DIR__.'/../src/'.str_replace('\\', '/', substr($class, \strlen('Omnibridge\\Static\\'))).'.php';
+        if (is_file($file)) {
+            require $file;
+        }
+    }
+});
+
+exit((new Omnibridge\Static\Console\Cli())->run(array_slice($argv, 1)));
