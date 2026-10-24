@@ -212,7 +212,8 @@ Verified (2026-10-24):
   lesringostars, omnibase's AdvancedRouter (a localized route memoised under
   its canonical name: the first page's language stayed in every later page's
   links) and HtmlTagRenderer (a page's style sheet printed on the next pages).
-  Its site file resets both before each page until the core does.
+  Both reset between requests since omniscient/omnibase d92b04c3
+  (ResetInterface); the export of lesringostars f4b94b7d needs no workaround.
 
 Not done, or not verified:
 
