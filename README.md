@@ -202,6 +202,17 @@ Verified (2026-10-24):
   console error and no failed request but the JSON the pages' scripts fetch
   from the dynamic host (below).
 - The example site: built, checked, built again, same report (CI).
+- The wrappers, their working copies loaded by hand (not yet installed in
+  either application): `omnibridge:static:build` on lesringostars gives the
+  same report as the plain command line but for the dev 404 page (Symfony's
+  exception page, its trace); the artisan command on lesringostars-laravel
+  rendered the twin's home, intro, destinations, two articles and the travels
+  pages through Laravel, the routes read from lesringostars' actions.
+- A long-lived process shows what a service keeps between requests: on
+  lesringostars, omnibase's AdvancedRouter (a localized route memoised under
+  its canonical name: the first page's language stayed in every later page's
+  links) and HtmlTagRenderer (a page's style sheet printed on the next pages).
+  Its site file resets both before each page until the core does.
 
 Not done, or not verified:
 
@@ -216,4 +227,11 @@ Not done, or not verified:
   fingerprints nothing itself, and records each file's checksum.
 - A site at a sub-path of its origin (`https://example.org/blog/`) is not
   supported: the export is at the root of its origin.
-- The Laravel command was not run on a Laravel application's export.
+- Neither wrapper has run from an installed package (omnibridge/static is not
+  yet on Packagist); the Laravel command has not exported a whole site.
+- The dev environment's 404 page is Symfony's exception page, which differs
+  from one build to the next; a deployable build is made in prod (on
+  lesringostars, rendered at its production origin: 243 pages and two builds
+  with the same report at first; later the same day the six search pages
+  answered 500 in a prod container compiled afresh, a constructor of the site
+  given another repository, outside this package).
