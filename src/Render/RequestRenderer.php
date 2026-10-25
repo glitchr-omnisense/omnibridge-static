@@ -61,6 +61,7 @@ final class RequestRenderer implements StaticRendererInterface
             self::body($response),
             $response->headers->get('Content-Type'),
             $response->headers->get('Location'),
+            $response->headers->get(StaticResponse::FRAGMENT_HEADER),
         );
     }
 

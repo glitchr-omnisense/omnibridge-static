@@ -148,7 +148,14 @@ twice) and a page-by-page comparison with the dynamic site find these.
   with an extension an error (`not-exportable`).
 - A redirection is a small page (meta refresh and canonical link) and a line
   of `_redirects` (Netlify, Cloudflare Pages; not for GitHub Pages, which
-  reads none) and `redirects.json`.
+  reads none) and `redirects.json`. A target keeps its own anchor
+  (`/docs/flowjs#sticky`). A static host never sees the visitor's own
+  `#fragment`: `StaticResponse::redirect($to, 301, fragment: 'sticky-')` - or,
+  through `RequestRenderer`, a response header `X-Static-Fragment: sticky-`
+  beside its `Location` - carries it over, prefixed, with a line of script
+  before the refresh: `/docs/flowjs/sticky#keys` lands on
+  `/docs/flowjs#sticky-keys` (a page merged into another, its anchors
+  prefixed); without script, the target's own anchor.
 - The page for unknown addresses (`Site::notFound()`) is `404.html`.
 - Every internal link of the written pages and style sheets is followed: to a
   page or file of the export, to a file of the public folder (copied, symbolic

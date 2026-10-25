@@ -364,14 +364,23 @@ final class Exporter
     private function redirect(StaticPage $page, StaticResponse $response): void
     {
         $location = (string) $response->location;
-        $target = $this->internal($location, $page->path) ?? $location;
+        $target = $this->internal($location, $page->path);
+        // An internal target keeps its own anchor (a page merged into another: /docs/flowjs#sticky).
+        $target = null !== $target ? $target.(false !== ($hash = strpos($location, '#')) ? substr($location, $hash) : '') : $location;
         $this->redirects[$page->path] = ['to' => $target, 'status' => $response->status];
 
         $escaped = htmlspecialchars($target, \ENT_QUOTES | \ENT_HTML5, 'UTF-8');
         // The addresses are moved under the base path with the other pages' (publish()); the text shows where it goes.
         $shown = htmlspecialchars($this->publicAddress($target), \ENT_QUOTES | \ENT_HTML5, 'UTF-8');
+        // A static host sees no fragment: the visitor's #keys is carried over by the page itself, before the
+        // refresh, to the target's address as published (the canonical link, moved under the base path).
+        $carry = null === $response->fragment ? '' : '<script>(function(){var t=document.querySelector(\'link[rel="canonical"]\').getAttribute(\'href\'),h=location.hash.slice(1);'
+            .'if(h){t=t.split(\'#\')[0]+\'#\'+'.json_encode($response->fragment, \JSON_HEX_TAG | \JSON_HEX_APOS | \JSON_HEX_QUOT | \JSON_HEX_AMP).'+h}location.replace(t)})()</script>';
         $stub = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>'.$shown.'</title>'
-            .'<meta http-equiv="refresh" content="0; url='.$escaped.'"><link rel="canonical" href="'.$escaped.'"><meta name="robots" content="noindex">'
+            .('' === $carry
+                ? '<meta http-equiv="refresh" content="0; url='.$escaped.'"><link rel="canonical" href="'.$escaped.'">'
+                : '<link rel="canonical" href="'.$escaped.'">'.$carry.'<meta http-equiv="refresh" content="0; url='.$escaped.'">')
+            .'<meta name="robots" content="noindex">'
             .'</head><body><a href="'.$escaped.'">'.$shown.'</a></body></html>'."\n";
         try {
             $file = OutputPath::page($page->path);

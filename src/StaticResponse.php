@@ -14,14 +14,24 @@ final class StaticResponse
      * @param string      $body        the content, as it is to be written
      * @param string|null $contentType the Content-Type header ("text/html; charset=UTF-8")
      * @param string|null $location    where a redirection sends (its Location header)
+     * @param string|null $fragment    a redirection that carries the visitor's own #fragment over: the prefix it
+     *                                 gains on the way ("" keeps it as it is; null drops it, as a meta refresh does)
      */
     public function __construct(
         public readonly int $status,
         public readonly string $body = '',
         public readonly ?string $contentType = null,
         public readonly ?string $location = null,
+        public readonly ?string $fragment = null,
     ) {
     }
+
+    /**
+     * The header a host's response names the fragment's prefix with, for RequestRenderer: a page of a
+     * manual merged into one page answers `Location: /docs/flowjs#sticky` and
+     * `X-Static-Fragment: sticky-` - /docs/flowjs/sticky#keys then lands on /docs/flowjs#sticky-keys.
+     */
+    public const FRAGMENT_HEADER = 'X-Static-Fragment';
 
     public static function html(string $body, int $status = 200): self
     {
@@ -33,9 +43,12 @@ final class StaticResponse
         return new self($status, $body, 'application/json');
     }
 
-    public static function redirect(string $location, int $status = 301): self
+    /**
+     * @param string|null $fragment the visitor's #fragment carried over with this prefix ("" as it is); null: dropped
+     */
+    public static function redirect(string $location, int $status = 301, ?string $fragment = null): self
     {
-        return new self($status, '', null, $location);
+        return new self($status, '', null, $location, $fragment);
     }
 
     public static function notFound(string $body = ''): self

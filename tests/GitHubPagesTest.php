@@ -48,6 +48,17 @@ final class GitHubPagesTest extends TestCase
         }
     }
 
+    public function testARedirectionCarriesTheVisitorsFragmentUnderTheBasePath(): void
+    {
+        (new Exporter())->export($this->site('https://owner.github.io/repo/'), $this->out);
+
+        $stub = (string) file_get_contents($this->out.'/manual/keys/index.html');
+        self::assertStringContainsString('<link rel="canonical" href="/repo/blog/hello#keys"><script>', $stub);
+        self::assertStringContainsString("t=t.split('#')[0]+'#'+\"keys-\"+h}location.replace(t)", $stub, '/manual/keys#arrows lands on /blog/hello#keys-arrows');
+        self::assertStringContainsString('<meta http-equiv="refresh" content="0; url=/repo/blog/hello#keys">', $stub, 'without a script, the target\'s own anchor');
+        self::assertStringNotContainsString('<script>', (string) file_get_contents($this->out.'/old/index.html'), 'a redirection without a fragment to carry has no script');
+    }
+
     public function testTheExportIsMovedUnderTheBasePath(): void
     {
         $report = (new Exporter())->export($this->site('https://owner.github.io/repo/'), $this->out);
@@ -87,7 +98,7 @@ final class GitHubPagesTest extends TestCase
         self::assertArrayHasKey('.nojekyll', $report->files);
         self::assertFileDoesNotExist($this->out.'/CNAME', 'on owner.github.io');
         self::assertFileDoesNotExist($this->out.'/_redirects', 'Pages reads none');
-        self::assertSame(['/repo/old' => ['to' => '/repo/blog/hello', 'status' => 301]], json_decode((string) file_get_contents($this->out.'/redirects.json'), true));
+        self::assertSame(['/repo/manual/keys' => ['to' => '/repo/blog/hello#keys', 'status' => 301], '/repo/old' => ['to' => '/repo/blog/hello', 'status' => 301]], json_decode((string) file_get_contents($this->out.'/redirects.json'), true));
         $stub = (string) file_get_contents($this->out.'/old/index.html');
         self::assertStringContainsString('<meta http-equiv="refresh" content="0; url=/repo/blog/hello">', $stub);
         self::assertStringContainsString('<a href="/repo/blog/hello">/repo/blog/hello</a>', $stub);
@@ -177,6 +188,7 @@ final class GitHubPagesTest extends TestCase
                 new StaticPage('/blog/hello', locale: 'en', alternates: ['fr' => '/fr/blog/bonjour']),
                 new StaticPage('/fr/blog/bonjour', locale: 'fr', alternates: ['en' => '/blog/hello']),
                 '/old',
+                '/manual/keys',
                 new StaticPage('/search.json', sitemap: false),
                 new StaticPage('/feed.atom', sitemap: false),
             ]))
@@ -185,6 +197,7 @@ final class GitHubPagesTest extends TestCase
                 '/blog/hello' => StaticResponse::html($layout('<link rel="alternate" hreflang="fr" href="'.$origin.'/fr/blog/bonjour">', '<h1>Hello</h1>')),
                 '/fr/blog/bonjour' => StaticResponse::html($layout('', '<h1>Bonjour</h1> <a href="../../blog/hello">en</a>')),
                 '/old' => StaticResponse::redirect('/blog/hello'),
+                '/manual/keys' => StaticResponse::redirect('/blog/hello#keys', 301, 'keys-'),
                 '/search.json' => new StaticResponse(200, '{"entries":[{"u":"/blog/hello","t":"Hello"}]}', 'application/json'),
                 '/feed.atom' => new StaticResponse(200, '<feed xmlns="http://www.w3.org/2005/Atom"><entry><link href="'.$origin.'/blog/hello"/></entry></feed>', 'application/atom+xml'),
                 '/media/photo.jpg' => new StaticResponse(200, 'JPEG', 'image/jpeg'),
