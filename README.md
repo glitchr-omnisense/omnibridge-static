@@ -294,11 +294,11 @@ Verified (2026-10-24):
   exporter, the base path and the GitHub Pages target, the command line and
   the plain script without Composer, the example), PHP 8.2; PHPStan at max,
   no baseline entry.
-- GitHub Pages (2026-10-24): the Omniscient website (Symfony, omnibase 4, its
-  `static.php`) built for `https://glitchr-studio.github.io/omniscient/`:
+- GitHub Pages (2026-10-24): the Omnisense website (Symfony, omnibase 4, its
+  `static.php`) built for `https://glitchr-omnisense.github.io/omnisense/`:
   1419 pages, 2254 files, 612 redirections, 47 MB, no diagnostic, no address
-  outside `/omniscient/`; two builds identical (`diff -r`); its root build
-  unchanged but for the pages whose text changed. Served under `/omniscient/`
+  outside `/omnisense/`; two builds identical (`diff -r`); its root build
+  unchanged but for the pages whose text changed. Served under `/omnisense/`
   by an nginx that answers as Pages does (folders redirected to a slash,
   404.html), headless Chrome on 10 pages at two widths and both colour
   schemes (landing in two languages, a guide, the package list and a
@@ -327,7 +327,7 @@ Verified (2026-10-24):
   lesringostars, omnibase's AdvancedRouter (a localized route memoised under
   its canonical name: the first page's language stayed in every later page's
   links) and HtmlTagRenderer (a page's style sheet printed on the next pages).
-  Both reset between requests since omniscient/omnibase d92b04c3
+  Both reset between requests since omnisense/omnibase d92b04c3
   (ResetInterface); the export of lesringostars f4b94b7d needs no workaround.
 
 Not done, or not verified:
