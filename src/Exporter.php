@@ -279,7 +279,9 @@ final class Exporter
 
         if ($response->isHtml()) {
             $file = OutputPath::page($page->path);
-        } elseif (OutputPath::hasExtension($page->path)) {
+        } elseif (OutputPath::hasExtension($page->path) || $response->isBytes()) {
+            // A path without extension is served as application/octet-stream: fine for a response
+            // that says it is bytes (StaticResponse::bytes()), wrong for any other type.
             $file = OutputPath::file($page->path);
         } else {
             $this->diagnostics[] = Diagnostic::error(Diagnostic::NOT_EXPORTABLE, $page->describe(), \sprintf('it answers %s, and its path has no extension a static host could serve it by', $response->mediaType() ?? 'no type'));

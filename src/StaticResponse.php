@@ -44,6 +44,23 @@ final class StaticResponse
     }
 
     /**
+     * A file served as application/octet-stream - what a static host answers for a path without a
+     * known extension -, for a reader that takes it so: npm's and Unity's registry clients read
+     * /<package> and /-/v1/search as JSON whatever the type (omnisense/omnihub's static hub).
+     * Exported at its path, extension or not.
+     */
+    public static function bytes(string $body, int $status = 200): self
+    {
+        return new self($status, $body, 'application/octet-stream');
+    }
+
+    /** Whether it is served as bytes (application/octet-stream): exportable at a path without extension. */
+    public function isBytes(): bool
+    {
+        return 'application/octet-stream' === $this->mediaType();
+    }
+
+    /**
      * @param string|null $fragment the visitor's #fragment carried over with this prefix ("" as it is); null: dropped
      */
     public static function redirect(string $location, int $status = 301, ?string $fragment = null): self

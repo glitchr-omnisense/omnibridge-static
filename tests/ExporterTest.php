@@ -137,9 +137,10 @@ final class ExporterTest extends TestCase
     public function testWhatCannotBeAStaticFileIsAnError(): void
     {
         $site = (new Site('https://example.org'))
-            ->provide(new PageList(['/a', '/a/index.html', '/api/items', '/broken', '/a', '/form']))
+            ->provide(new PageList(['/a', '/a/index.html', '/api/items', '/registry/com.example.thing', '/broken', '/a', '/form']))
             ->renderWith(new CallableRenderer(static fn (StaticPage $page) => match ($page->path) {
                 '/api/items' => StaticResponse::json('[]'),
+                '/registry/com.example.thing' => StaticResponse::bytes('{"name":"com.example.thing"}'),
                 '/form' => '<form method="post"><button>Send</button></form>',
                 '/broken' => new StaticResponse(500, 'oops', 'text/html'),
                 default => '<p>A</p>',
@@ -150,6 +151,7 @@ final class ExporterTest extends TestCase
         self::assertSame(['a/index.html'], self::subjects($report, Diagnostic::DUPLICATE_OUTPUT), 'two pages, one file');
         self::assertSame(['/a'], self::subjects($report, Diagnostic::DUPLICATE_PAGE), 'the same page twice: a warning');
         self::assertSame(['/api/items'], self::subjects($report, Diagnostic::NOT_EXPORTABLE), 'JSON at a path without extension');
+        self::assertSame('{"name":"com.example.thing"}', file_get_contents($this->out.'/registry/com.example.thing'), 'bytes at a path without extension: exported, served as they say');
         self::assertSame(['/broken'], self::subjects($report, Diagnostic::RENDER_FAILED));
         self::assertSame(['/form'], self::subjects($report, Diagnostic::BROKEN_LINK), 'a form posted, and no dynamic host');
         self::assertStringContainsString('no post', $report->errors()[\count($report->errors()) - 1]->message);

@@ -145,7 +145,11 @@ twice) and a page-by-page comparison with the dynamic site find these.
   $uri/index.html =404;`), a path ending in `.html` and any other file at its
   path. Two pages for one file is an error (`duplicate-output`), the same page
   twice a warning (`duplicate-page`), a page that is neither HTML nor a path
-  with an extension an error (`not-exportable`).
+  with an extension an error (`not-exportable`) - unless it answers
+  `StaticResponse::bytes()`: a static host serves a path without extension
+  as `application/octet-stream`, which a reader such as an npm or Unity
+  registry client takes (omnisense/omnihub's static hub writes `/<package>`
+  and `/-/v1/search` so).
 - A redirection is a small page (meta refresh and canonical link) and a line
   of `_redirects` (Netlify, Cloudflare Pages; not for GitHub Pages, which
   reads none) and `redirects.json`. A target keeps its own anchor
