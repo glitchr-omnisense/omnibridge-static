@@ -10,6 +10,9 @@ order: 60
 - In CI: `omnibridge-static build site.php --out=dist --strict`, then `omnibridge-static check dist`,
   then build again into another folder and compare (`diff -r`, or the two `omnibridge-static.json`):
   two builds of the same application must be the same folder.
+- An incremental export must give the folder a full one gives: after a change, `build --cache=...`
+  into the earlier folder and `build --full` into an empty one, then `diff -r` the two (the package's
+  own proof is `IncrementalExportTest`, [Incremental exports](incremental.md)).
 - `--verify` renders every page twice in the same process: a page that differs shows a service that
   keeps state between requests.
 - Against the dynamic site: render the same addresses through the host and compare page by page,

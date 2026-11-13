@@ -5,14 +5,17 @@ order: 30
 
 # The export
 
-`Omnibridge\Static\Exporter::export(Site $site, string $outDir, bool $verify = false): Report` - what
-the command line's `build` runs. In order: the folder prepared (created, or emptied when it holds an
-earlier export; marked as an export from the start, so a build that stops half-way is replaced by the
-next one; a folder holding anything else is refused with a `RuntimeException`), the pages collected, the
-manifests' files and the copies written from the public folder, each page rendered and written, the
-links followed, the diagnostics summarised, `sitemap.xml`, the redirections, the base path applied
-([GitHub Pages](github-pages.md)), `omnibridge-static.json`. A progress line every 50 pages, and a last
-line with the counts.
+`Omnibridge\Static\Exporter::export(Site $site, string $outDir, bool $verify = false, bool $full = false, ?array $only = null): Report` -
+what the command line's `build` runs. In order: the target checked (nothing, or an earlier export: a
+folder holding anything else is refused with a `RuntimeException`), a staging folder made beside it
+(`.<name>.staging`), the pages collected, the manifests' files and the copies written from the public
+folder, each page rendered (or its answer taken from the cache) and written, the links followed, the
+diagnostics summarised, `sitemap.xml`, the redirections, the base path applied
+([GitHub Pages](github-pages.md)), `omnibridge-static.json`, and the staging folder moved into the
+target: only the files that changed are written, the ones no longer exported removed
+([Incremental exports](incremental.md), with `$full` and `$only`). A progress line every 50 pages, a
+line with the counts, and a last line with the renderings and the files written, unchanged and
+removed.
 
 ## The files
 
@@ -95,9 +98,11 @@ it is written (and before `--verify` compares), so that two builds give the same
 `sitemap.xml` lists the HTML pages of role page whose `sitemap` is true, sorted, at the base URL, with
 their alternates (`xhtml:link hreflang`), with no date. `Site::sitemap(false)` writes none.
 
-`omnibridge-static.json` (`Exporter::REPORT`): `generator`, `baseUrl`, `pages` (path => file, status,
-route, locale), `redirects`, `files` (every file's `sha256` and `size`), `diagnostics` - sorted, no date.
-Two builds of the same application give the same file; `check` compares a folder with it.
+`omnibridge-static.json` (`Exporter::REPORT`): `generator`, `build` (`code`: the SHA-256 of the
+package's `src/`, which a later export compares), `baseUrl`, `pages` (path => file, status, route,
+locale), `redirects`, `files` (every file's `sha256` and `size`, and `inputs` - the fingerprint of its
+rendering's inputs - when the site declares them), `diagnostics` - sorted, no date, no count. Two builds
+of the same application give the same file, full or incremental; `check` compares a folder with it.
 
 ## A run
 

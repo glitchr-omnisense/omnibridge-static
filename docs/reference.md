@@ -26,11 +26,14 @@ path segment cannot hold) is an `InvalidArgumentException`. Every setter returns
 | `resourceAttributes(string ...$attributes)` | none | more attributes naming a file the page's scripts load |
 | `sitemap(bool $sitemap = true)` | on | write `sitemap.xml` |
 | `githubPages(bool $githubPages = true)` | off | export for GitHub Pages ([GitHub Pages](github-pages.md)) |
+| `dependsOn(array $shared, ?\Closure $pages = null)` | none: every page rendered every time | what the renderings depend on: files, folders, glob patterns or values every page depends on (added to an earlier call's), and `fn (StaticPage $page): ?array` a page's own (null: not known) ([Incremental exports](incremental.md)) |
+| `cache(?string $dir)` | none | the folder the renderer's answers are kept in between exports, by fingerprint |
 
 Read back: `basePath()` (`/repository`, `''` at the root), `origin()` (scheme, host, port, lower case),
 `customDomain()`, `isForGitHubPages()`, `providers()`, `renderer()`, `getPublicDir()`, `manifests()`,
 `copies()`, `notFoundPage()`, `dynamicHost()`, `normalisers()`, `followsResources()`,
-`writesSitemap()`, `getResourceAttributes()`, `isDynamic(string $path)`.
+`writesSitemap()`, `getResourceAttributes()`, `isDynamic(string $path)`, `sharedInputs()`,
+`inputsOf(StaticPage $page)`, `cacheDir()`.
 
 ## StaticPage
 
@@ -73,10 +76,16 @@ Read back: `basePath()` (`/repository`, `''` at the root), `origin()` (scheme, h
 ## Report
 
 What `Exporter::export()` returns and writes as `omnibridge-static.json`: `baseUrl`, `files`
-(path => `{sha256, size}`), `pages` (path => `{file, status, route, locale}`), `redirects`
-(path => `{to, status}`), `diagnostics` (`list<Diagnostic>`, in the order found). `errors()`,
-`warnings()`, `level($level)`, `hasErrors()`, `counts()` (`"<level> <code>"` => count, sorted),
-`toJson()` (stable keys, the diagnostics sorted, no date).
+(path => `{sha256, size}`, and `inputs` for a rendered file whose inputs are declared), `pages`
+(path => `{file, status, route, locale}`), `redirects` (path => `{to, status}`), `diagnostics`
+(`list<Diagnostic>`, in the order found), `code` (the package's code fingerprint, written as
+`build.code`). `errors()`, `warnings()`, `level($level)`, `hasErrors()`, `counts()`
+(`"<level> <code>"` => count, sorted), `toJson()` (stable keys, the diagnostics sorted, no date, no
+summary), `withSummary()`.
+
+`summary` (`?Build\Summary`, not in the file): `mode` (`full` or `incremental`), `why`, `rendered`,
+`reused`, `targeted`, `undeclared`, `written`, `unchanged`, `removed`, `matched`; `isIncremental()`,
+`describe()` (the command line's last line).
 
 `Diagnostic`: `level` (`error`, `warning`, `notice`), `code`, `subject`, `message`; printed
 `[level] code subject: message` ([Errors](errors.md)).
@@ -89,3 +98,8 @@ What `Exporter::export()` returns and writes as `omnibridge-static.json`: `baseU
   manifest names, sorted, once each; another host's addresses left out.
 - `Link\Links`: reads and rewrites the addresses of HTML and CSS (kinds `page`, `form`, `post`,
   `resource`); `Output\BasePath`: moves addresses under a folder and finds those left outside.
+- `Build\Fingerprint`: `code()` (the package's `src/`), `inputs(array $inputs)` (files by content,
+  folders by their files, glob patterns by their matches, other strings as they are; whatever the
+  order), `page(StaticPage $page)` (null when a parameter is an object); `Build\ResponseCache`
+  (`get()`, `put()`, `prune()`); `Build\Sync::apply($staging, $target, $last, $all)` (the staging
+  folder moved into the target, the same bytes left, the rest removed).

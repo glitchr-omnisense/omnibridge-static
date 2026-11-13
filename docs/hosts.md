@@ -71,6 +71,11 @@ php artisan omnibridge:static:build static.php --out=storage/static --actions='A
 Each page goes through the HTTP kernel as `Illuminate\Http\Request::createFromBase()` of the
 renderer's request. An invalid argument prints the message and exits with `INVALID` (2).
 
+Neither command passes `--cache`, `--only` nor `--full` yet: under a host, the site's file names the
+cache (`Site::cache()`), and every export is incremental in its writing and, with declared inputs, in
+its renderings; a targeted or a full export goes through the plain command line, or `Cli::build()`
+with `['only' => '/news/*']` or `['full' => true]` ([Incremental exports](incremental.md)).
+
 ## Calling Cli yourself
 
 ```php

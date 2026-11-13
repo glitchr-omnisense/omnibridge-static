@@ -3,6 +3,10 @@
 namespace Omnibridge\Static;
 
 use Omnibridge\Static\Asset\AssetManifest;
+use Omnibridge\Static\Build\Fingerprint;
+use Omnibridge\Static\Build\ResponseCache;
+use Omnibridge\Static\Build\Summary;
+use Omnibridge\Static\Build\Sync;
 use Omnibridge\Static\Link\Links;
 use Omnibridge\Static\Output\BasePath;
 use Omnibridge\Static\Output\OutputPath;
@@ -30,9 +34,27 @@ use Omnibridge\Static\Route\SkipReportingInterface;
  *
  * The output is deterministic: pages are rendered in the order of their
  * paths, nothing written carries a date, the report's lists are sorted. With
- * $verify, every page is rendered twice and a page that differs is an error.
- * The folder is emptied first, if it holds an earlier export (its
- * omnibridge-static.json) or nothing.
+ * $verify, every page rendered is rendered twice and a page that differs is
+ * an error.
+ *
+ * The export is made in a staging folder beside the target (.<name>.staging)
+ * and then moved into it (Build\Sync): a file whose bytes are already there
+ * is left as it is, the others written, what is no longer exported removed;
+ * the target holds an earlier export (its omnibridge-static.json) or nothing,
+ * any other folder is refused. Whatever the target held, it ends up as an
+ * export into an empty folder would. The report's summary counts the files
+ * written, unchanged and removed.
+ *
+ * The renderings are incremental too when the site declares what they depend
+ * on (Site::dependsOn()) and where to keep them (Site::cache()): a page whose
+ * inputs' fingerprint is in the cache is not rendered, its answer taken from
+ * it, and everything after the rendering runs on that answer as on a fresh
+ * one. A page whose inputs are not declared is rendered every time. $only
+ * renders the addresses its patterns name whatever the cache holds (a
+ * targeted rebuild: what changed where no declared input shows it); any other
+ * is reused only when its declared inputs prove it unaffected. $full renders
+ * everything and rewrites every file; an earlier export made by another
+ * version of this package (its report's build.code) forces it.
  */
 final class Exporter
 {
@@ -69,20 +91,48 @@ final class Exporter
     private array $queryIgnored = [];
     /** @var list<StaticPage> */
     private array $sitemapPages = [];
+    /** @var array<string, string> file in the export => the fingerprint of the inputs of the rendering that wrote it */
+    private array $inputs = [];
+    private ?ResponseCache $cache = null;
+    /** Whether nothing is taken from the cache (a full export). */
+    private bool $full = false;
+    /** @var list<string>|null */
+    private ?array $only = null;
+    private ?string $shared = null;
+    /** @var array<string, string> each input's fingerprint line, for this export */
+    private array $memo = [];
+    private int $rendered = 0;
+    private int $reused = 0;
+    private int $targeted = 0;
+    private int $undeclared = 0;
+    private int $matched = 0;
 
     /** @param (\Closure(string): void)|null $log told of the progress, a line at a time */
     public function __construct(private readonly ?\Closure $log = null)
     {
     }
 
-    public function export(Site $site, string $outDir, bool $verify = false): Report
+    /**
+     * @param bool              $verify every page rendered is rendered twice; a page that differs is an error
+     * @param bool              $full   nothing taken from the cache, every file rewritten
+     * @param list<string>|null $only   fnmatch patterns of paths ("/news/*": "*" crosses slashes) rendered whatever the
+     *                                  cache holds - a targeted rebuild; null: none
+     */
+    public function export(Site $site, string $outDir, bool $verify = false, bool $full = false, ?array $only = null): Report
     {
         $this->site = $site;
         $this->base = new BasePath($site->origin(), $site->basePath());
-        $this->out = rtrim($outDir, '/');
-        $this->diagnostics = $this->written = $this->served = $this->pages = $this->redirects = $this->documents = $this->broken = $this->dynamicLinks = $this->queryIgnored = $this->sitemapPages = $this->pageKeys = [];
+        $target = rtrim($outDir, '/');
+        $this->diagnostics = $this->written = $this->served = $this->pages = $this->redirects = $this->documents = $this->broken = $this->dynamicLinks = $this->queryIgnored = $this->sitemapPages = $this->pageKeys = $this->inputs = [];
+        $this->rendered = $this->reused = $this->targeted = $this->undeclared = $this->matched = 0;
+        $this->shared = null;
+        $this->memo = [];
+        $this->only = $only;
 
-        $this->prepare();
+        $why = $this->earlier($target, $full);
+        $this->full = null !== $why;
+        $this->cache = null !== $site->cacheDir() ? new ResponseCache($site->cacheDir()) : null;
+        $this->out = $this->stage($target);
         $pages = $this->collect();
         $this->copyAssets();
 
@@ -107,31 +157,76 @@ final class Exporter
         $this->writeRedirects();
         $this->publish();
 
-        $report = new Report($site->baseUrl, $this->checksums(), self::sorted($this->pages), self::sorted($this->redirects), $this->diagnostics);
+        $report = new Report($site->baseUrl, $this->checksums(), self::sorted($this->pages), self::sorted($this->redirects), $this->diagnostics, Fingerprint::code());
         file_put_contents($this->out.'/'.self::REPORT, $report->toJson());
-        $this->log(\sprintf('%d pages, %d files, %d redirections; %d errors, %d warnings', \count($report->pages), \count($report->files), \count($report->redirects), \count($report->errors()), \count($report->warnings())));
+        $changes = Sync::apply($this->out, $target, self::REPORT, $this->full);
+        $this->out = $target;
+        $this->cache?->prune();
 
-        return $report;
+        $summary = new Summary($this->full ? Summary::FULL : Summary::INCREMENTAL, $why, $this->rendered, $this->reused, $this->targeted, $this->undeclared, $changes['written'], $changes['unchanged'], $changes['removed'], null !== $this->only ? $this->matched : null);
+        $this->log(\sprintf('%d pages, %d files, %d redirections; %d errors, %d warnings', \count($report->pages), \count($report->files), \count($report->redirects), \count($report->errors()), \count($report->warnings())));
+        $this->log($summary->describe());
+        if (null !== $this->only) {
+            if (0 === $this->matched) {
+                $this->log(\sprintf('--only: no address matches %s', implode(', ', $this->only)));
+            }
+            if ($this->rendered > $this->targeted) {
+                $this->log(\sprintf('--only: %d addresses outside the patterns rendered too (%d whose inputs are not declared: nothing proves them unaffected; %d whose inputs changed or are not in the cache)', $this->rendered - $this->targeted, $this->undeclared, $this->rendered - $this->targeted - $this->undeclared));
+            }
+        }
+
+        return $report->withSummary($summary);
     }
 
-    private function prepare(): void
+    /**
+     * Why the export is a full one (null: incremental) - the target checked: nothing, or an earlier export.
+     */
+    private function earlier(string $target, bool $full): ?string
     {
-        if (is_dir($this->out)) {
-            $entries = array_diff((array) scandir($this->out), ['.', '..']);
-            if ($entries && !is_file($this->out.'/'.self::REPORT)) {
-                throw new \RuntimeException(\sprintf('"%s" holds files and no earlier export (%s): give an empty folder.', $this->out, self::REPORT));
+        if (!is_dir($target)) {
+            if (file_exists($target)) {
+                throw new \RuntimeException(\sprintf('"%s" is a file: give a folder.', $target));
             }
-            foreach (new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($this->out, \FilesystemIterator::SKIP_DOTS), \RecursiveIteratorIterator::CHILD_FIRST) as $entry) {
-                if (!$entry instanceof \SplFileInfo) {
-                    continue;
-                }
-                $entry->isDir() && !$entry->isLink() ? rmdir($entry->getPathname()) : unlink($entry->getPathname());
-            }
-        } elseif (!mkdir($this->out, 0o777, true) && !is_dir($this->out)) {
-            throw new \RuntimeException(\sprintf('"%s" cannot be made.', $this->out));
+
+            return $full ? 'asked' : null;
         }
-        // Marked as an export from the start: a build that stops half-way is replaced by the next one.
-        file_put_contents($this->out.'/'.self::REPORT, '{"generator": "omnibridge/static", "complete": false}'."\n");
+        if (!array_diff((array) scandir($target), ['.', '..'])) {
+            return $full ? 'asked' : null;
+        }
+        $json = is_file($target.'/'.self::REPORT) ? file_get_contents($target.'/'.self::REPORT) : false;
+        if (false === $json) {
+            throw new \RuntimeException(\sprintf('"%s" holds files and no earlier export (%s): give an empty folder.', $target, self::REPORT));
+        }
+        if ($full) {
+            return 'asked';
+        }
+        try {
+            $earlier = json_decode($json, true, 512, \JSON_THROW_ON_ERROR);
+        } catch (\JsonException) {
+            $earlier = null;
+        }
+        $code = \is_array($earlier) && \is_array($earlier['build'] ?? null) ? $earlier['build']['code'] ?? null : null;
+
+        return Fingerprint::code() === $code ? null : 'the earlier export was made by another version of omnibridge/static';
+    }
+
+    /** The staging folder beside the target, empty but for the mark of an export, a leftover of an interrupted one replaced. */
+    private function stage(string $target): string
+    {
+        $staging = \dirname($target).'/.'.basename($target).'.staging';
+        if (is_dir($staging) && !is_link($staging)) {
+            if (array_diff((array) scandir($staging), ['.', '..']) && !is_file($staging.'/'.self::REPORT)) {
+                throw new \RuntimeException(\sprintf('"%s" holds files and no export of omnibridge/static: it is the staging folder of "%s", remove it.', $staging, $target));
+            }
+            Sync::remove($staging);
+        }
+        if (!@mkdir($staging, 0o777, true) && !is_dir($staging)) {
+            throw new \RuntimeException(\sprintf('"%s" cannot be made.', $staging));
+        }
+        // Marked as an export from the start: a staging folder an interrupted build left is replaced by the next one.
+        file_put_contents($staging.'/'.self::REPORT, '{"generator": "omnibridge/static", "complete": false}'."\n");
+
+        return $staging;
     }
 
     /** @return list<StaticPage> the pages to render, one per address, in the order of their paths */
@@ -244,7 +339,8 @@ final class Exporter
 
     private function page(StaticPage $page, bool $verify): void
     {
-        $response = $this->render($page);
+        $fingerprint = $this->fingerprint($page);
+        $response = $this->obtain($page, $fingerprint, $rendered);
         if (null === $response) {
             return;
         }
@@ -253,13 +349,13 @@ final class Exporter
             if (404 !== $response->status) {
                 $this->diagnostics[] = Diagnostic::warning(Diagnostic::RENDER_FAILED, $page->describe(), \sprintf('the page for unknown addresses answered %d, not 404', $response->status));
             }
-            $this->writePage('404.html', $page, $response);
+            $this->writePage('404.html', $page, $response, $fingerprint);
 
             return;
         }
 
         if ($response->isRedirect()) {
-            $this->redirect($page, $response);
+            $this->redirect($page, $response, $fingerprint);
 
             return;
         }
@@ -270,7 +366,7 @@ final class Exporter
             return;
         }
 
-        if ($verify) {
+        if ($verify && $rendered) {
             $again = $this->render($page);
             if (null !== $again && $this->normalised($again, $page)->body !== $this->normalised($response, $page)->body) {
                 $this->diagnostics[] = Diagnostic::error(Diagnostic::NOT_DETERMINISTIC, $page->describe(), self::difference($this->normalised($response, $page)->body, $this->normalised($again, $page)->body));
@@ -289,7 +385,7 @@ final class Exporter
             return;
         }
 
-        if ($this->writePage($file, $page, $response)) {
+        if ($this->writePage($file, $page, $response, $fingerprint)) {
             $this->served[OutputPath::key($page->path)] = $file;
             $this->pageKeys[OutputPath::key($page->path)] = true;
             $this->pages[$page->path] = ['file' => $file, 'status' => $response->status, 'route' => $page->route, 'locale' => $page->locale];
@@ -297,6 +393,67 @@ final class Exporter
                 $this->sitemapPages[] = $page;
             }
         }
+    }
+
+    /**
+     * A page's answer: taken from the cache when its inputs' fingerprint is there (and it is not a full
+     * export, nor an address --only names), rendered otherwise and then kept.
+     *
+     * @param-out bool $rendered
+     */
+    private function obtain(StaticPage $page, ?string $fingerprint, ?bool &$rendered = null): ?StaticResponse
+    {
+        $targeted = null !== $this->only && $this->targets($page->path);
+        if ($targeted) {
+            ++$this->matched;
+        }
+        if (null !== $fingerprint && null !== $this->cache && !$this->full && !$targeted && null !== $cached = $this->cache->get($fingerprint)) {
+            ++$this->reused;
+            $rendered = false;
+
+            return $cached;
+        }
+        $rendered = true;
+        ++$this->rendered;
+        if ($targeted) {
+            ++$this->targeted;
+        } elseif (null === $fingerprint) {
+            ++$this->undeclared;
+        }
+        $response = $this->render($page);
+        // An error is asked again next time.
+        if (null !== $response && null !== $fingerprint && null !== $this->cache && ($response->status < 400 || StaticPage::NOT_FOUND === $page->role)) {
+            $this->cache->put($fingerprint, $response);
+        }
+
+        return $response;
+    }
+
+    private function targets(string $path): bool
+    {
+        foreach ($this->only ?? [] as $pattern) {
+            if (fnmatch($pattern, $path)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * The fingerprint of what a page's rendering depends on - this package's code, the PHP version, the
+     * site's base URL, its shared inputs, the page itself and its own inputs -, or null when its inputs are
+     * not declared (Site::dependsOn()).
+     */
+    private function fingerprint(StaticPage $page): ?string
+    {
+        $inputs = $this->site->inputsOf($page);
+        if (null === $inputs || null === $identity = Fingerprint::page($page)) {
+            return null;
+        }
+        $this->shared ??= hash('sha256', implode("\n", [Fingerprint::code(), \PHP_VERSION, $this->site->baseUrl, Fingerprint::inputs($this->site->sharedInputs(), $this->memo)]));
+
+        return hash('sha256', $this->shared."\n".$identity."\n".Fingerprint::inputs($inputs, $this->memo));
     }
 
     private function render(StaticPage $page): ?StaticResponse
@@ -348,10 +505,10 @@ final class Exporter
         return $response->withBody($body);
     }
 
-    private function writePage(string $file, StaticPage $page, StaticResponse $response): bool
+    private function writePage(string $file, StaticPage $page, StaticResponse $response, ?string $fingerprint): bool
     {
         $response = $this->normalised($response, $page, true);
-        if (!$this->write($file, $response->body, $page->describe())) {
+        if (!$this->write($file, $response->body, $page->describe(), $fingerprint)) {
             return false;
         }
         if ($response->isHtml()) {
@@ -363,7 +520,7 @@ final class Exporter
         return true;
     }
 
-    private function redirect(StaticPage $page, StaticResponse $response): void
+    private function redirect(StaticPage $page, StaticResponse $response, ?string $fingerprint): void
     {
         $location = (string) $response->location;
         $target = $this->internal($location, $page->path);
@@ -391,7 +548,7 @@ final class Exporter
 
             return;
         }
-        if ($this->write($file, $stub, $page->describe())) {
+        if ($this->write($file, $stub, $page->describe(), $fingerprint)) {
             $this->served[OutputPath::key($page->path)] = $file;
             $this->documents[] = [$file, $page->path, 'html'];
         }
@@ -472,7 +629,8 @@ final class Exporter
 
             return;
         }
-        $response = $this->render($page);
+        $fingerprint = $this->fingerprint($page);
+        $response = $this->obtain($page, $fingerprint);
         if (null === $response) {
             $this->broken($path, $from, 'its rendering failed');
 
@@ -507,7 +665,7 @@ final class Exporter
 
             return;
         }
-        if ($this->write($file, $response->body, 'the resource '.$path)) {
+        if ($this->write($file, $response->body, 'the resource '.$path, $fingerprint)) {
             $this->served[$key] = $file;
             if ($response->isCss()) {
                 $this->documents[] = [$file, $path, 'css'];
@@ -717,7 +875,8 @@ final class Exporter
         }
     }
 
-    private function write(string $file, string $body, string $owner): bool
+    /** @param string|null $fingerprint the inputs of the rendering it comes from, when they are declared */
+    private function write(string $file, string $body, string $owner, ?string $fingerprint = null): bool
     {
         if (isset($this->written[$file])) {
             $this->diagnostics[] = Diagnostic::error(Diagnostic::DUPLICATE_OUTPUT, $file, \sprintf('%s and %s are both written to it: the first is kept', $this->written[$file], $owner));
@@ -738,17 +897,23 @@ final class Exporter
         }
         file_put_contents($path, $body);
         $this->written[$file] = $owner;
+        if (null !== $fingerprint) {
+            $this->inputs[$file] = $fingerprint;
+        }
 
         return true;
     }
 
-    /** @return array<string, array{sha256: string, size: int}> */
+    /** @return array<string, array{sha256: string, size: int, inputs?: string}> */
     private function checksums(): array
     {
         $files = [];
         foreach (array_keys($this->written) as $file) {
             $path = $this->out.'/'.$file;
             $files[$file] = ['sha256' => (string) hash_file('sha256', $path), 'size' => (int) filesize($path)];
+            if (isset($this->inputs[$file])) {
+                $files[$file]['inputs'] = $this->inputs[$file];
+            }
         }
         ksort($files, \SORT_STRING);
 

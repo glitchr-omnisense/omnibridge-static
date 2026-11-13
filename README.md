@@ -182,9 +182,19 @@ twice) and a page-by-page comparison with the dynamic site find these.
   two builds give the same folder.
 - `sitemap.xml` lists the pages (and their alternates), with no date.
 - `omnibridge-static.json`: every file's SHA-256 and size, the pages and the
-  file each went to, the redirections, the diagnostics - sorted, no date. A
-  build that stops half-way leaves the folder marked, and the next replaces it;
-  a folder holding anything else is refused.
+  file each went to, the redirections, the diagnostics - sorted, no date - and
+  the fingerprint of the package's code (`build.code`). A folder holding
+  anything but an earlier export is refused.
+- Incremental: the export is made beside the folder and moved into it, only
+  the files whose bytes changed written, the ones no longer exported removed;
+  the last line counts them (`incremental: 708 rendered, 3886 reused; 6
+  written, 4811 unchanged, 0 removed`). With `Site::dependsOn()` (what the
+  renderings depend on: files, folders, globs, values) and a cache
+  (`Site::cache()`, `--cache=`), a page whose inputs did not change is not
+  rendered again; `--only=/news/*` renders the addresses it names whatever
+  the cache holds (a targeted rebuild), `--full` everything. A full and an
+  incremental export give the same folder, byte for byte
+  ([docs/incremental.md](docs/incremental.md)).
 
 ## Deploying to GitHub Pages
 
@@ -292,8 +302,26 @@ registered only when this package is installed:
 
 ## Verified, and not
 
-Verified (2026-10-24):
+Verified (2026-10-24, and below 2026-11-13):
 
+- Incremental exports (2026-11-13): the suite, 84 tests, 348 assertions, green in PHP 8.2
+  and 8.4, PHPStan at max with no baseline entry. `IncrementalExportTest` asserts that a full
+  and an incremental export give the same tree after a changed page, a changed route list, a
+  changed shared asset and a changed layout, from a folder edited by hand, from an empty folder
+  with a warm cache, and from an export by another version. The Omnisense website (its
+  `static.php`, 1183 pages, 3410 redirections, 4817 files, GitHub Pages under `/omnisense/`), on
+  a scratch copy with this checkout as a path repository:
+  - unchanged, its folder is the earlier package's but for `build.code`;
+  - a second build writes nothing (`0 written, 4817 unchanged`).
+  - With a `Site::dependsOn()` added on that copy only (manual pages by their package's fetched
+    files, the other pages by every content file), a warm build renders nothing (`0 rendered,
+    4594 reused`, 49 s against 72 s cold, on a loaded machine).
+  - After a manual's page and a news item were edited: `708 rendered, 3886 reused; 6 written`.
+    `diff -r` against a `--full` build into an empty folder: identical, before and after the
+    edit.
+  - A unity-hub-template copy (omnisense/omnihub's `build --strict`): exit 0, its second
+    build `2 written, 3 unchanged`. The two are `-/all` and `-/v1/search`, whose `_updated` is
+    the build's time: omnihub writes it, not this package.
 - The suite: 71 tests (contracts, providers, renderers, links, manifests, the
   exporter, the base path and the GitHub Pages target, the command line and
   the plain script without Composer, the example), PHP 8.2; PHPStan at max,
@@ -341,8 +369,11 @@ Not done, or not verified:
   calls it from the static site gets a 404. It needs the dynamic host
   (cross-origin, with no session token) or a static JSON the application
   exports at a path with an extension.
-- Incremental builds (dependency tracking) are not done: every build is a
-  full, clean build.
+- Incremental builds: the writing is always incremental; the renderings only
+  where the site declares their inputs (`Site::dependsOn()`), which nothing
+  checks: an undeclared dependency gives a stale page from the cache. A
+  dependency between pages is known only through the files they declare. The
+  Symfony and Artisan commands pass neither `--cache`, `--only` nor `--full`.
 - Assets are copied as the bundler fingerprinted them; the exporter
   fingerprints nothing itself, and records each file's checksum.
 - A site under a folder of its origin moves what the export reads and the
@@ -353,8 +384,9 @@ Not done, or not verified:
   moved under the folder too.
 - GitHub Pages' own behaviour (the slash redirection, 404.html at any depth)
   was reproduced with nginx, not observed on Pages.
-- Neither wrapper has run from an installed package (omnibridge/static is not
-  yet on Packagist); the Laravel command has not exported a whole site.
+- omnibridge/static is on Packagist (`1.x-dev`, no tag). Neither wrapper has
+  run from an installed package; the Laravel command has not exported a whole
+  site.
 - The dev environment's 404 page is Symfony's exception page, which differs
   from one build to the next; a deployable build is made in prod (on
   lesringostars, rendered at its production origin: 243 pages and two builds

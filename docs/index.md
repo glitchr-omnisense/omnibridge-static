@@ -83,6 +83,8 @@ The master plan's illustrative contracts, as built:
 - [Rendering](rendering.md): `RequestRenderer`, `ActionRenderer`, `CallableRenderer`, one process.
 - [The export](export.md): files, redirections (and `X-Static-Fragment`), 404, links followed, the
   dynamic host, normalisers, `sitemap.xml`, `omnibridge-static.json`.
+- [Incremental exports](incremental.md): only what changed written, the renderings reused by the
+  declared inputs, `--only`, `--full`, and the proof that a full and an incremental export agree.
 - [GitHub Pages](github-pages.md): the base path, `.nojekyll`, `CNAME`, the check, the workflow.
 - [Reference](reference.md): `Site`, `StaticPage`, `StaticResponse`, `Report` - every method and field.
 - [Errors](errors.md): every diagnostic code, the exceptions, the exit codes.

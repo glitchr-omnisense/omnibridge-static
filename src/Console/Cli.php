@@ -15,12 +15,19 @@ use Omnibridge\Static\Site;
  * call with their host:
  *
  *     omnibridge-static build static.php [--out=dist] [--target=github-pages] [--verify] [--strict] [--quiet]
+ *                                        [--cache=<folder>] [--only=<pattern>,...] [--full]
  *     omnibridge-static check dist
  *
  * build: the site the file declares (it returns a Site, or a closure that
  * takes the host's offer - Cli::HOST_* - and returns one) exported to --out;
  * the exit code is 1 when there is an error (with --strict, a warning too).
  * --target=github-pages exports for GitHub Pages (Site::githubPages()).
+ * --cache keeps the renderer's answers in a folder (Site::cache()): with the
+ * inputs the site declares (Site::dependsOn(), the site's file among them),
+ * a page whose inputs did not change is not rendered again. --only renders
+ * the addresses its patterns name whatever the cache holds (a targeted
+ * rebuild); --full renders everything and rewrites every file. Every build
+ * writes only the files that changed and removes those no longer exported.
  * check: an export's files against its omnibridge-static.json (each there,
  * the same checksum, nothing more) and, for a site under a folder of its
  * origin, no internal address outside that folder - what a deployment step
@@ -109,7 +116,19 @@ final class Cli
             default => throw new \InvalidArgumentException(\sprintf('Unknown target "%s" (github-pages).', \is_string($options['target']) ? $options['target'] : '')),
         };
         $out = \is_string($options['out'] ?? null) ? $options['out'] : 'dist';
-        $report = (new Exporter($quiet ? null : fn (string $line) => $this->line($line)))->export($site, $out, isset($options['verify']));
+        if (isset($options['cache'])) {
+            $site->cache(\is_string($options['cache']) && '' !== $options['cache'] ? $options['cache'] : throw new \InvalidArgumentException('--cache names a folder: --cache=var/static-cache.'));
+        }
+        $only = null;
+        if (isset($options['only'])) {
+            $only = \is_string($options['only']) ? array_values(array_filter(array_map(trim(...), explode(',', $options['only'])), static fn (string $pattern) => '' !== $pattern)) : [];
+            if (!$only) {
+                throw new \InvalidArgumentException('--only names paths or patterns: --only=/news/*,/.');
+            }
+        }
+        // The site's own file is an input of every page: what it declares is how they are rendered.
+        $site->dependsOn([$file]);
+        $report = (new Exporter($quiet ? null : fn (string $line) => $this->line($line)))->export($site, $out, isset($options['verify']), isset($options['full']), $only);
         $this->summary($report, $quiet);
 
         return $report->hasErrors() || (isset($options['strict']) && $report->warnings()) ? 1 : 0;
@@ -203,11 +222,15 @@ final class Cli
         foreach ($report->counts() as $code => $count) {
             $this->line(\sprintf('%5d %s', $count, $code));
         }
+        // Without --quiet, the exporter's last line said it.
+        if ($quiet && null !== $report->summary) {
+            $this->line($report->summary->describe());
+        }
     }
 
     private function usage(): int
     {
-        $this->line('omnibridge-static build <site.php> [--out=dist] [--target=github-pages] [--verify] [--strict] [--quiet]');
+        $this->line('omnibridge-static build <site.php> [--out=dist] [--target=github-pages] [--verify] [--strict] [--quiet] [--cache=<folder>] [--only=<pattern>,...] [--full]');
         $this->line('omnibridge-static check <dist>');
 
         return 2;

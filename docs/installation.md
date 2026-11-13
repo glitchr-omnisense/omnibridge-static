@@ -27,17 +27,21 @@ from `src/` otherwise - so a checkout runs it with no Composer at all.
 
 ```text
 omnibridge-static build <site.php> [--out=dist] [--target=github-pages] [--verify] [--strict] [--quiet]
+                         [--cache=<folder>] [--only=<pattern>,...] [--full]
 omnibridge-static check <dist>
 ```
 
 | Argument or option | Default | Effect |
 |---|---|---|
 | `build <site.php>` | `static.php` | the file that returns a `Site` (or a closure that returns one) |
-| `--out=` | `dist` | the folder to export to: created, or emptied when it holds an earlier export (an `omnibridge-static.json`); a folder holding anything else is refused |
+| `--out=` | `dist` | the folder to export to: created, or brought to the new export when it holds an earlier one (an `omnibridge-static.json`) - the files that changed written, the others left as they are, the ones no longer exported removed; a folder holding anything else is refused |
 | `--target=github-pages` | none | `Site::githubPages()` ([GitHub Pages](github-pages.md)); another value is refused |
-| `--verify` | off | every page rendered twice; a page that differs is an error (`not-deterministic`) |
+| `--verify` | off | every page rendered twice; a page that differs is an error (`not-deterministic`); a page taken from the cache is not rendered, so not verified (`--full --verify` verifies them all) |
+| `--cache=` | none (`Site::cache()`) | the folder the renderer's answers are kept in: with the inputs the site declares (`Site::dependsOn()`), a page whose inputs did not change is not rendered again ([Incremental exports](incremental.md)) |
+| `--only=` | none | comma-separated path patterns (`fnmatch`, `*` crosses slashes) rendered whatever the cache holds: a targeted rebuild; any other address is reused only when its declared inputs prove it unaffected |
+| `--full` | off | nothing taken from the cache, every file rewritten; forced when the earlier export was made by another version of the package |
 | `--strict` | off | a warning fails the build too |
-| `--quiet` | off | no progress lines; of the diagnostics, the errors only; the counts stay |
+| `--quiet` | off | no progress lines; of the diagnostics, the errors only; the counts and the summary line stay |
 | `check <dist>` | `dist` | every file of the report there with its checksum, no file more, and, for a site under a folder of its origin, no internal address outside that folder |
 
 Options are written `--name=value` or `--name`; a value separated by a space is read as an argument.
@@ -47,7 +51,7 @@ Every line goes to standard error.
 |---|---|
 | 0 | built (or checked) with no error (and no warning with `--strict`) |
 | 1 | an error (or, with `--strict`, a warning); `check`: a problem |
-| 2 | an invalid argument: no such file, a file that returns no `Site`, an unknown target, a folder without `omnibridge-static.json` for `check`; no command or an unknown one (the usage is printed) |
+| 2 | an invalid argument: no such file, a file that returns no `Site`, an unknown target, `--cache` or `--only` without a value, a folder without `omnibridge-static.json` for `check`; no command or an unknown one (the usage is printed) |
 
 ## The example, built and checked
 

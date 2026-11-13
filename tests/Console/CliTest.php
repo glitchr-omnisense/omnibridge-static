@@ -4,6 +4,7 @@ namespace Omnibridge\Static\Tests\Console;
 
 use Omnibridge\Static\Console\Cli;
 use Omnibridge\Static\Exporter;
+use Omnibridge\Static\Tests\Fixtures\ContentSite;
 use Omnibridge\Static\Tests\Fixtures\Folder;
 use Omnibridge\Static\Tests\Fixtures\PlainApp;
 use PHPUnit\Framework\TestCase;
@@ -57,6 +58,28 @@ final class CliTest extends TestCase
             self::assertStringContainsString('returns no Omnibridge\Static\Site', $this->lines[0]);
         } finally {
             unlink($file);
+        }
+    }
+
+    public function testCacheOnlyAndFullAndTheSummaryLine(): void
+    {
+        $root = sys_get_temp_dir().'/omnibridge-static-content-'.getmypid();
+        ContentSite::make($root);
+        $build = function (string ...$options) use ($root): string {
+            $this->lines = [];
+            self::assertSame(0, $this->cli()->run(['build', __DIR__.'/../Fixtures/content-site.php', '--out='.$this->out, '--cache='.$root.'/cache', '--quiet', ...array_values($options)]), implode("\n", $this->lines));
+
+            return (string) end($this->lines);
+        };
+        try {
+            self::assertSame('incremental: 7 rendered, 0 reused; 12 written, 0 unchanged, 0 removed', $build());
+            self::assertSame('incremental: 0 rendered, 7 reused; 0 written, 12 unchanged, 0 removed', $build());
+            self::assertSame('incremental: 2 rendered, 5 reused; 0 written, 12 unchanged, 0 removed', $build('--only=/a, /b'));
+            self::assertSame('full (asked): 7 rendered, 0 reused; 12 written, 0 unchanged, 0 removed', $build('--full'));
+            self::assertSame(2, $this->cli()->run(['build', __DIR__.'/../Fixtures/content-site.php', '--out='.$this->out, '--only=']));
+            self::assertSame(2, $this->cli()->run(['build', __DIR__.'/../Fixtures/content-site.php', '--out='.$this->out, '--cache']));
+        } finally {
+            Folder::remove($root);
         }
     }
 

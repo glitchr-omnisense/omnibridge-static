@@ -55,6 +55,14 @@ final class Site
 
     private string $basePath;
 
+    /** @var list<string> */
+    private array $sharedInputs = [];
+
+    /** @var (\Closure(StaticPage): (list<string>|null))|null */
+    private ?\Closure $pageInputs = null;
+
+    private ?string $cacheDir = null;
+
     /**
      * @param string $baseUrl the public address of the static site: its origin ("https://example.org"), or the
      *                        folder of an origin it is served under ("https://owner.github.io/repository/") -
@@ -244,6 +252,74 @@ final class Site
         $this->sitemap = $sitemap;
 
         return $this;
+    }
+
+    /**
+     * What the renderings depend on, for an incremental export: a page whose inputs are unchanged since the
+     * export that cached its answer (Site::cache()) is not rendered again, its answer taken from the cache.
+     * The exporter cannot see inside a renderer: only what is declared here proves a page unaffected, and a
+     * page without declared inputs is rendered every time.
+     *
+     * An input is a file (its content), a folder (its files' names and contents), a glob pattern (what it
+     * matches), or any other string, taken as it is (a commit, a version: what the files do not show).
+     *
+     *     ->dependsOn(
+     *         [__DIR__.'/src', __DIR__.'/templates', __DIR__.'/config', __DIR__.'/composer.lock'],
+     *         fn (StaticPage $page) => match (true) {
+     *             str_starts_with($page->path, '/news/') => [__DIR__.'/news/'.basename($page->path).'.md'],
+     *             '/news' === $page->path => [__DIR__.'/news'],   // the list: every item
+     *             default => null,                                 // unknown: rendered every time
+     *         },
+     *     )
+     *
+     * @param list<string>                                     $shared what every page depends on: the renderer's code, its
+     *                                                                 templates and configuration (a change renders every
+     *                                                                 page again); added to those of an earlier call
+     * @param (\Closure(StaticPage): (list<string>|null))|null $pages  the inputs of one page beside the shared ones ([] for
+     *                                                                 none), or null when they are not known; it is asked
+     *                                                                 for every address rendered (pages, redirections, the
+     *                                                                 page for unknown addresses, the files the pages refer
+     *                                                                 to, StaticPage::$role)
+     */
+    public function dependsOn(array $shared, ?\Closure $pages = null): self
+    {
+        array_push($this->sharedInputs, ...$shared);
+        $this->pageInputs = $pages ?? $this->pageInputs;
+
+        return $this;
+    }
+
+    /** @return list<string> */
+    public function sharedInputs(): array
+    {
+        return $this->sharedInputs;
+    }
+
+    /**
+     * The declared inputs of a page beside the shared ones, or null when they are not known.
+     *
+     * @return list<string>|null
+     */
+    public function inputsOf(StaticPage $page): ?array
+    {
+        return null !== $this->pageInputs ? ($this->pageInputs)($page) : null;
+    }
+
+    /**
+     * The folder the renderer's answers are kept in between exports, by the fingerprint of their inputs
+     * (Build\ResponseCache): what lets an export reuse them. Outside the export's folder; kept between CI
+     * runs by the CI's own cache. Without it, every page is rendered and only the writing is incremental.
+     */
+    public function cache(?string $dir): self
+    {
+        $this->cacheDir = null !== $dir ? rtrim($dir, '/') : null;
+
+        return $this;
+    }
+
+    public function cacheDir(): ?string
+    {
+        return $this->cacheDir;
     }
 
     /** @return list<StaticRouteProviderInterface> */

@@ -37,6 +37,11 @@ jobs:
         run: |
           php ../../bin/omnibridge-static build site.php --out=dist-2 --quiet
           cmp dist/omnibridge-static.json dist-2/omnibridge-static.json
+      - name: An incremental build into the earlier folder gives the clean build's folder
+        working-directory: examples/plain
+        run: |
+          php ../../bin/omnibridge-static build site.php --out=dist --quiet
+          diff -r dist dist-2
       - name: The same site for GitHub Pages, under a folder of its origin (every address moved, none outside)
         working-directory: examples/plain
         env:
