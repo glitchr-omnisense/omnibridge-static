@@ -1,8 +1,11 @@
 # Changelog
 
-omnibridge/static has no tagged release yet; Packagist serves the `1.x` branch as `1.x-dev`.
+## [Unreleased]
 
-## 1.x (unreleased)
+## [1.0.0] - 2026-11-13
+
+The first stable release: `composer require omnibridge/static` installs with Composer's default
+stability. The package requires PHP 8.2 and nothing else. What it holds since the first commit:
 
 ### Added
 
@@ -38,7 +41,7 @@ omnibridge/static has no tagged release yet; Packagist serves the `1.x` branch a
 - An export no longer empties its folder first. A build that stops half-way leaves the folder as it
   was; the next build replaces its staging folder (`.<name>.staging`).
 
-## The first commit (2026-10-24)
+### The first commit (2026-10-24)
 
 The generic static exporter of the master plan (section 7, phase 2):
 

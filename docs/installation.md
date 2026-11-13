@@ -16,7 +16,7 @@ PHP 8.2 or later, nothing else. Three packages are suggested, each needed by one
 | `psr/container` (1.1 or 2) | `Render\ActionRenderer` |
 
 ```sh
-composer require omnibridge/static:1.x-dev
+composer require omnibridge/static
 ```
 
 ## The command line

@@ -18,6 +18,12 @@ PHPStan at max, no baseline entry; the CI export job's steps (strict build, chec
 with the same report, an incremental build into the earlier folder equal to the clean one, the
 GitHub Pages build); the two consumers below.
 
+On 2026-11-13, for 1.0.0: an empty Composer project with no stability setting, this checkout as a
+path repository presented as 1.0.0; `composer require omnibridge/static:^1.0` installs it alone, and
+`examples/plain` builds with `vendor/bin/omnibridge-static build site.php --out=dist --strict` (3
+pages, 11 files, 1 redirection, no diagnostic) and checks (`11 files checked, 0 problems`), in
+`ghcr.io/glitchr-studio/php:8.4`. No code changed for the release, so the suite was not run again.
+
 ## As the README states
 
 
@@ -41,7 +47,7 @@ GitHub Pages build); the two consumers below.
   - A unity-hub-template copy (omnisense/omnihub's `build --strict`): exit 0, its second
     build `2 written, 3 unchanged`. The two are `-/all` and `-/v1/search`, whose `_updated` is
     the build's time: omnihub writes it, not this package.
-- The suite: 71 tests (contracts, providers, renderers, links, manifests, the
+- The suite (2026-10-24): 71 tests (contracts, providers, renderers, links, manifests, the
   exporter, the base path and the GitHub Pages target, the command line and
   the plain script without Composer, the example), PHP 8.2; PHPStan at max,
   no baseline entry.
@@ -92,7 +98,9 @@ GitHub Pages build); the two consumers below.
   where the site declares their inputs (`Site::dependsOn()`), which nothing
   checks: an undeclared dependency gives a stale page from the cache. A
   dependency between pages is known only through the files they declare. The
-  Symfony and Artisan commands pass neither `--cache`, `--only` nor `--full`.
+  Symfony and Artisan commands pass `--cache`, `--only` and `--full` from
+  omnibridge/symfony 1.1.0 and omnibridge/laravel 1.1.0 on (each bridge's own
+  test); neither has made an incremental export of a whole site.
 - Assets are copied as the bundler fingerprinted them; the exporter
   fingerprints nothing itself, and records each file's checksum.
 - A site under a folder of its origin moves what the export reads and the
@@ -103,9 +111,11 @@ GitHub Pages build); the two consumers below.
   moved under the folder too.
 - GitHub Pages' own behaviour (the slash redirection, 404.html at any depth)
   was reproduced with nginx, not observed on Pages.
-- omnibridge/static is on Packagist (`1.x-dev`, no tag). Neither wrapper has
-  run from an installed package; the Laravel command has not exported a whole
-  site.
+- From 1.0.0 the package installs with Composer's default stability
+  (`composer require omnibridge/static`), checked on 2026-11-13 in an empty
+  project with this checkout presented as 1.0.0, before the tag. Neither
+  wrapper has run from an installed package; the Laravel command has not
+  exported a whole site.
 - The dev environment's 404 page is Symfony's exception page, which differs
   from one build to the next; a deployable build is made in prod (on
   lesringostars, rendered at its production origin: 243 pages and two builds

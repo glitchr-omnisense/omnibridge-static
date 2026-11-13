@@ -23,7 +23,7 @@ symfony/http-foundation or a PSR-11 container name those types only in their sig
 them only when used.
 
 ```sh
-composer require omnibridge/static:1.x-dev
+composer require omnibridge/static
 ```
 
 ## Plain PHP first

@@ -43,11 +43,14 @@ Registered by omnibridge/symfony's `config/services.php` when this package is in
 (`Omnibridge\Symfony\Static\BuildCommand`):
 
 ```sh
-bin/console omnibridge:static:build static.php --out=var/static [--render-origin=https://example.org] [--verify] [--strict] [--quiet-progress]
+bin/console omnibridge:static:build static.php --out=var/static [--render-origin=https://example.org] [--verify] [--strict] [--quiet-progress] [--cache=var/static-cache] [--only=/news/*,/] [--full]
 ```
 
 `--out` defaults to `var/static`; `--render-origin` to the router's request context (scheme, host,
-port unless 80 or 443); `--quiet-progress` is the command line's `--quiet`. There is no `--target`
+port unless 80 or 443); `--quiet-progress` is the command line's `--quiet`. `--cache`, `--only` and
+`--full` are the command line's ([Incremental exports](incremental.md)); `--cache` and `--out` are
+taken as given (relative to the working directory), the site's file relative to the project
+directory. These three options come with omnibridge/symfony 1.1.0. There is no `--target`
 option: a site for GitHub Pages calls `->githubPages()` in its file. omnibridge/symfony's manual has
 the details.
 
@@ -57,7 +60,7 @@ Registered by omnibridge/laravel's `OmnibridgeServiceProvider` when this package
 (`Omnibridge\Laravel\Static\BuildCommand`):
 
 ```sh
-php artisan omnibridge:static:build static.php --out=storage/static --actions='App\Action\=src/Action' [--render-origin=...] [--verify] [--strict] [--quiet-progress]
+php artisan omnibridge:static:build static.php --out=storage/static --actions='App\Action\=src/Action' [--render-origin=...] [--verify] [--strict] [--quiet-progress] [--cache=storage/static-cache] [--only=/news/*,/] [--full]
 ```
 
 | Argument or option | Default | Effect |
@@ -67,14 +70,20 @@ php artisan omnibridge:static:build static.php --out=storage/static --actions='A
 | `--render-origin` | `config('app.url')`, else `http://localhost` | the origin the pages are rendered at |
 | `--actions=Namespace\=folder` | none (repeatable) | the actions whose `#[Route]` attributes give the offer's `routes` |
 | `--verify`, `--strict`, `--quiet-progress` | off | as the command line's `--verify`, `--strict`, `--quiet` |
+| `--cache=folder` | none | the renderer's answers kept between builds; relative to the base path unless absolute |
+| `--only=/news/*,/` | none | a targeted rebuild: the addresses these patterns name are rendered whatever the cache holds |
+| `--full` | off | render everything and rewrite every file, the cache aside |
 
 Each page goes through the HTTP kernel as `Illuminate\Http\Request::createFromBase()` of the
 renderer's request. An invalid argument prints the message and exits with `INVALID` (2).
 
-Neither command passes `--cache`, `--only` nor `--full` yet: under a host, the site's file names the
-cache (`Site::cache()`), and every export is incremental in its writing and, with declared inputs, in
-its renderings; a targeted or a full export goes through the plain command line, or `Cli::build()`
-with `['only' => '/news/*']` or `['full' => true]` ([Incremental exports](incremental.md)).
+`--cache`, `--only` and `--full` come with omnibridge/laravel 1.1.0.
+
+Under either host the site's file may also name the cache itself (`Site::cache()`); every export is
+incremental in its writing and, with declared inputs, in its renderings
+([Incremental exports](incremental.md)). With an older omnibridge/symfony or omnibridge/laravel,
+which has none of the three options, a targeted or a full export goes through the plain command line,
+or `Cli::build()` with `['only' => '/news/*']` or `['full' => true]`.
 
 ## Calling Cli yourself
 

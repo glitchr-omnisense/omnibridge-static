@@ -10,6 +10,8 @@ on:
     branches: ['1.x']
   pull_request:
   workflow_dispatch:
+  # release.yml runs this CI on a tag before the release.
+  workflow_call:
 
 permissions:
   contents: read
@@ -25,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     container: php:8.2-cli
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: 'Build the example site (strict: a warning fails)'
         working-directory: examples/plain
         run: php ../../bin/omnibridge-static build site.php --out=dist --strict --verify
@@ -51,7 +53,7 @@ jobs:
           php ../../bin/omnibridge-static check dist-pages
           test -f dist-pages/.nojekyll && test ! -e dist-pages/_redirects
           grep -q 'href="/example/posts/hello"' dist-pages/index.html
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: example-static-site
           path: examples/plain/dist
