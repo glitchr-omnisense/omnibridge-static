@@ -3,7 +3,9 @@
 namespace Omnibridge\Static;
 
 use Omnibridge\Static\Asset\AssetManifest;
+use Omnibridge\Static\Build\Environment;
 use Omnibridge\Static\Build\Fingerprint;
+use Omnibridge\Static\Build\Record;
 use Omnibridge\Static\Build\ResponseCache;
 use Omnibridge\Static\Build\Summary;
 use Omnibridge\Static\Build\Sync;
@@ -55,6 +57,12 @@ use Omnibridge\Static\Route\SkipReportingInterface;
  * is reused only when its declared inputs prove it unaffected. $full renders
  * everything and rewrites every file; an earlier export made by another
  * version of this package (its report's build.code) forces it.
+ *
+ * Beside its answers the cache keeps the record of the export that filled
+ * it (Build\Record): the environment, the PHP files the process loaded, the
+ * declared inputs and each address's. A cache whose record is missing, of
+ * another version or environment, or lists a PHP file that changed or went,
+ * gives nothing: the export is a full one, and says why.
  */
 final class Exporter
 {
@@ -94,6 +102,12 @@ final class Exporter
     /** @var array<string, string> file in the export => the fingerprint of the inputs of the rendering that wrote it */
     private array $inputs = [];
     private ?ResponseCache $cache = null;
+    /** The record of the export that last filled the cache (Build\Record), read at the start. */
+    private ?Record $record = null;
+    /** @var array{php: string, extensions: array<string, string>, packages: array<string, string>} */
+    private array $environment = ['php' => \PHP_VERSION, 'extensions' => [], 'packages' => []];
+    /** @var array<string, array{path: string, role: string, fingerprint: string|null, inputs: list<string>|null}> role and path => what its rendering depends on */
+    private array $addresses = [];
     /** Whether nothing is taken from the cache (a full export). */
     private bool $full = false;
     /** @var list<string>|null */
@@ -123,15 +137,24 @@ final class Exporter
         $this->site = $site;
         $this->base = new BasePath($site->origin(), $site->basePath());
         $target = rtrim($outDir, '/');
-        $this->diagnostics = $this->written = $this->served = $this->pages = $this->redirects = $this->documents = $this->broken = $this->dynamicLinks = $this->queryIgnored = $this->sitemapPages = $this->pageKeys = $this->inputs = [];
+        $this->diagnostics = $this->written = $this->served = $this->pages = $this->redirects = $this->documents = $this->broken = $this->dynamicLinks = $this->queryIgnored = $this->sitemapPages = $this->pageKeys = $this->inputs = $this->addresses = [];
         $this->rendered = $this->reused = $this->targeted = $this->undeclared = $this->matched = 0;
         $this->shared = null;
         $this->memo = [];
         $this->only = $only;
 
         $why = $this->earlier($target, $full);
-        $this->full = null !== $why;
         $this->cache = null !== $site->cacheDir() ? new ResponseCache($site->cacheDir()) : null;
+        $this->record = null;
+        if (null !== $this->cache && null !== $dir = $site->cacheDir()) {
+            // The cache is trusted only as its record describes it, and the record goes until this export
+            // ends: an export cut short leaves a cache the next one does not trust.
+            $this->environment = Environment::current();
+            $this->record = Record::read($dir);
+            $why ??= null === $this->record ? 'no record of an earlier export in the cache' : $this->record->distrust(Fingerprint::code(), $this->environment, $site->ignoredLoaded());
+            Record::forget($dir);
+        }
+        $this->full = null !== $why;
         $this->out = $this->stage($target);
         $pages = $this->collect();
         $this->copyAssets();
@@ -162,6 +185,7 @@ final class Exporter
         $changes = Sync::apply($this->out, $target, self::REPORT, $this->full);
         $this->out = $target;
         $this->cache?->prune();
+        $this->keepRecord();
 
         $summary = new Summary($this->full ? Summary::FULL : Summary::INCREMENTAL, $why, $this->rendered, $this->reused, $this->targeted, $this->undeclared, $changes['written'], $changes['unchanged'], $changes['removed'], null !== $this->only ? $this->matched : null);
         $this->log(\sprintf('%d pages, %d files, %d redirections; %d errors, %d warnings', \count($report->pages), \count($report->files), \count($report->redirects), \count($report->errors()), \count($report->warnings())));
@@ -448,12 +472,34 @@ final class Exporter
     private function fingerprint(StaticPage $page): ?string
     {
         $inputs = $this->site->inputsOf($page);
-        if (null === $inputs || null === $identity = Fingerprint::page($page)) {
-            return null;
+        $fingerprint = null;
+        if (null !== $inputs && null !== $identity = Fingerprint::page($page)) {
+            $this->shared ??= hash('sha256', implode("\n", [Fingerprint::code(), \PHP_VERSION, $this->site->baseUrl, Fingerprint::inputs($this->site->sharedInputs(), $this->memo)]));
+            $fingerprint = hash('sha256', $this->shared."\n".$identity."\n".Fingerprint::inputs($inputs, $this->memo));
         }
-        $this->shared ??= hash('sha256', implode("\n", [Fingerprint::code(), \PHP_VERSION, $this->site->baseUrl, Fingerprint::inputs($this->site->sharedInputs(), $this->memo)]));
+        $this->addresses[$page->path."\n".$page->role] = ['path' => $page->path, 'role' => $page->role, 'fingerprint' => $fingerprint, 'inputs' => $inputs];
 
-        return hash('sha256', $this->shared."\n".$identity."\n".Fingerprint::inputs($inputs, $this->memo));
+        return $fingerprint;
+    }
+
+    /**
+     * The cache's new record (Build\Record): what this export depended on - the environment, the PHP files
+     * the process loaded, each declared input, each address rendered or reused -, and the declared inputs
+     * that changed since the earlier record, told.
+     */
+    private function keepRecord(): void
+    {
+        if (null === $this->cache || null === $dir = $this->site->cacheDir()) {
+            return;
+        }
+        $inputs = array_map(static fn (string $line): string => hash('sha256', $line), $this->memo);
+        ksort($inputs, \SORT_STRING);
+        $addresses = $this->addresses;
+        ksort($addresses, \SORT_STRING);
+        if (null !== $this->record && !$this->full && [] !== $changed = $this->record->changedInputs($inputs)) {
+            $this->log(\sprintf('changed since the last export: %d declared input%s (%s)', \count($changed), 1 === \count($changed) ? '' : 's', implode(', ', \array_slice($changed, 0, 5)).(\count($changed) > 5 ? ', ...' : '')));
+        }
+        (new Record(Fingerprint::code(), $this->environment, Environment::loaded($this->site->ignoredLoaded()), $inputs, array_values($addresses)))->write($dir);
     }
 
     private function render(StaticPage $page): ?StaticResponse

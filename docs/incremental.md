@@ -6,7 +6,9 @@ order: 35
 # Incremental exports
 
 Every export writes only what changed. When the site declares what its renderings depend on, an
-export also renders only what changed. Correctness comes before speed. Whatever the folder held
+export also renders only what changed. What no site declares and the exporter can still see - the PHP
+files the process loaded, the PHP version and extensions, the installed packages - is recorded beside
+the cache, and any change to it makes the next export a full one. Correctness comes before speed. Whatever the folder held
 before, an incremental export leaves it byte for byte as a full export into an empty folder would
 leave it, `omnibridge-static.json` included (`IncrementalExportTest` proves it, below).
 
@@ -97,11 +99,89 @@ The rules that keep a stale page out:
 - Another version of the package, another PHP version or another base URL never matches: the
   fingerprint changes.
 - The command line adds the site's own file to the shared inputs.
-- After an export, the cache holds only the answers that export used (`ResponseCache::prune()`).
-  Nothing else in its folder is touched.
+- A cache whose record does not vouch for it (below) gives nothing: the export is a full one.
+- After an export, the cache holds only the answers that export used (`ResponseCache::prune()`) and
+  that export's record. Nothing else in its folder is touched.
 
 Keep the cache outside the export's folder. In CI, keep it between runs with the CI's own cache, keyed
-so that a run restores the last one, as the composer cache is.
+so that a run restores the last one, as the composer cache is. The record is a file of that folder: it
+is restored with the answers, and the folder alone is what to restore.
+
+## What the exporter sees by itself: the build record
+
+Declared inputs say what a page is made of. They cannot cover what the site never thinks of: a PHP
+template its renderer includes, a class of `src/`, a package upgraded, an extension of another version
+(`intl` writes dates). The exporter sees those, for the whole export rather than page by page, and
+writes them beside the answers, in `<cache>/omnibridge-static.build.json` (`Build\Record`):
+
+| Entry | What it holds |
+|---|---|
+| `format`, `code` | the record's format (1) and the SHA-256 of the package's `src/` |
+| `environment.php` | the PHP version |
+| `environment.extensions` | every loaded extension and its version |
+| `environment.packages` | every package Composer installed, `version@reference`, the root package aside (its reference is the checkout's commit; its code is seen through the files it loads) |
+| `loaded` | every PHP file the process loaded (`get_included_files()`), with its SHA-256 at the end of the export (`null`: gone by then) |
+| `inputs` | every declared input this export fingerprinted, with the SHA-256 of what it read |
+| `addresses` | every address rendered or reused: its path, role, fingerprint and declared inputs (`null`: not declared) |
+
+The record holds no date. Its paths are absolute: a checkout moved elsewhere finds its PHP files
+"gone", and makes a full export.
+
+An export with a cache reads the record, then removes it until it writes its own at the end: an export
+cut short (an exception, a killed process) leaves a cache that the next export does not trust. It
+trusts the cache only when all of these hold:
+
+- the record is there, readable and of format 1;
+- it was written by this version of the package;
+- the PHP version, the extensions and the installed packages are the same;
+- every PHP file it lists has the same content, and none is gone (or back).
+
+Otherwise the export is a full one, and its summary says why, in these words:
+
+```text
+full (no record of an earlier export in the cache): ...
+full (the cache was filled by another version of omnibridge/static): ...
+full (PHP 8.4.15, the earlier export ran on 8.4.14): ...
+full (the PHP extensions changed: intl): ...
+full (the installed packages changed: symfony/http-kernel, twig/twig): ...
+full (a PHP file the earlier export loaded changed: /app/templates/post.php): ...
+```
+
+The first export into a fresh cache is the first line. The next export after a full one is
+incremental again: the record it finds is the full export's.
+
+What the record cannot see:
+
+- what a renderer reads without loading it as PHP: a Twig or Blade template, a Markdown file, a
+  YAML configuration, a database. These are declared (`Site::dependsOn()`), or the page is rendered
+  every time. A template an engine compiles to PHP (Twig, Blade) is no witness of its source: the
+  record is checked before the engine compiles anything, against the compiled file of the last
+  export.
+- which page used which file: a change makes the whole next export a full one;
+- a file changed while an export ran: its content at the end of the export is recorded.
+
+Declared inputs that changed are told before the summary, the five first named:
+
+```text
+changed since the last export: 1 declared input (/app/news/2026-11-14-release.en.md)
+```
+
+### The application's cache folder: `Site::ignoreLoaded()`
+
+A file the application writes afresh, with the same meaning but other bytes or at another path,
+would make every export a full one. An application's own cache folder is the case: a CI run starts
+from a fresh `var/cache`, so every compiled file of the last run is gone or rewritten, and Symfony's
+compiled container carries its build time (`container.build_time`, the current time unless
+`SOURCE_DATE_EPOCH` is set). Leave such files out:
+
+```php
+->ignoreLoaded(__DIR__.'/var/cache/*')   // fnmatch patterns of absolute paths; "*" crosses slashes
+```
+
+The cache folder is safe to leave out when the sources it is compiled from are declared or loaded:
+`src/` is loaded, while `config/` and `templates/` are declared. Where the cache folder is kept
+between exports (a developer's machine), leaving it out is still right: it is compiled from those
+same sources.
 
 ## A targeted rebuild: `--only`
 
@@ -124,14 +204,15 @@ So `--only` never gives an older page than an incremental export would give. Wit
 it renders everything, and only the writing stays incremental. A pattern that matches no address is
 reported (`--only: no address matches ...`).
 
-## A full export: `--full`, or another version
+## A full export: `--full`, another version, or a cache not vouched for
 
 `--full` (`Exporter::export(..., full: true)`) takes nothing from the cache and rewrites every file;
 the summary says `full (asked)`. An earlier export made by another version of the package forces the
 same thing, with the summary `full (the earlier export was made by another version of
 omnibridge/static)`. An earlier export from before incremental exports, which has no `build.code` in
 its report, counts as another version. The report's `build.code` is the SHA-256 of the package's
-`src/`.
+`src/`. A cache whose record does not vouch for it forces the same, with the reasons
+[above](#what-the-exporter-sees-by-itself-the-build-record).
 
 ## What the report holds
 
@@ -140,7 +221,8 @@ its report, counts as another version. The report's `build.code` is the SHA-256 
 - `build.code`;
 - for each file a rendering wrote, `inputs`: its fingerprint, when its inputs are declared.
 
-It holds no count: a full and an incremental export of the same application write the same report.
+It holds no count, and the build record is in the cache, not in the export's folder: a full and an
+incremental export of the same application write the same report and the same files.
 The counts are in `Report::$summary` (`Build\Summary`):
 
 | Field | Meaning |
@@ -174,3 +256,21 @@ The same holds from a folder edited by hand (a page changed, a foreign file adde
 file goes, an empty folder), from an empty folder with a warm cache, and from an earlier export by
 another version (`full`). `--only` with declared inputs renders its address alone; without declared
 inputs it renders everything and says why.
+
+The build record's tests, each compared with a full export into an empty folder in the same way:
+
+| Change | Mode | Rendered | Reused | Written | Unchanged | Removed |
+|---|---|---|---|---|---|---|
+| none (two clean builds, one with a cache: the same tree and report) | - | 7 | 0 | 12 | - | - |
+| a declared configuration file (the title) | incremental, the input named | 7 | 0 | 5 | 7 | 0 |
+| a PHP file the renderer includes, declared nowhere | full | 7 | 0 | 12 | 0 | 0 |
+| the export after it | incremental | 0 | 7 | 0 | 12 | 0 |
+| a PHP file of the record gone | full | | | | | |
+| that file left out by `Site::ignoreLoaded()`, rewritten | incremental | 0 | 7 | 0 | 12 | 0 |
+| another PHP version, extension, package version, package code, record format; no record | full, each reason checked | 7 | 0 | 12 | 0 | 0 |
+| an export cut short by an exception | full (no record) | | | | | |
+| a page deleted: the list rendered again, the page's folder, report entry and record entry gone | incremental | 1 | 5 | 2 | 9 | 1 |
+
+`testTheRecordSaysWhatEachAddressDependedOn` reads the record: each address with its declared
+inputs, the PHP version, the packages (`phpunit/phpunit` among them, not the root package), each
+declared input.

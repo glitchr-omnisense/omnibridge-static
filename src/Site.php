@@ -63,6 +63,9 @@ final class Site
 
     private ?string $cacheDir = null;
 
+    /** @var list<string> fnmatch patterns of absolute paths */
+    private array $ignoredLoaded = [];
+
     /**
      * @param string $baseUrl the public address of the static site: its origin ("https://example.org"), or the
      *                        folder of an origin it is served under ("https://owner.github.io/repository/") -
@@ -309,6 +312,9 @@ final class Site
      * The folder the renderer's answers are kept in between exports, by the fingerprint of their inputs
      * (Build\ResponseCache): what lets an export reuse them. Outside the export's folder; kept between CI
      * runs by the CI's own cache. Without it, every page is rendered and only the writing is incremental.
+     * The folder also holds the record of the export that filled it (Build\Record): without it, or when
+     * it does not vouch for the cache (another environment, a loaded PHP file changed), the export is a
+     * full one.
      */
     public function cache(?string $dir): self
     {
@@ -320,6 +326,27 @@ final class Site
     public function cacheDir(): ?string
     {
         return $this->cacheDir;
+    }
+
+    /**
+     * PHP files the process loads that the next export does not compare (Build\Record): what the
+     * application compiles into its own cache folder ("/app/var/cache/*"), gone or rewritten in a fresh
+     * one, where Symfony's container carries its build time. Their sources are loaded (src/) or declared
+     * (Site::dependsOn(): config/, templates/). Every other file an export loaded - the renderer's code,
+     * the templates PHP includes, the installed packages - is compared, and one that changed or went
+     * makes the next export a full one. "*" crosses slashes; added to those of an earlier call.
+     */
+    public function ignoreLoaded(string ...$patterns): self
+    {
+        array_push($this->ignoredLoaded, ...array_values($patterns));
+
+        return $this;
+    }
+
+    /** @return list<string> */
+    public function ignoredLoaded(): array
+    {
+        return $this->ignoredLoaded;
     }
 
     /** @return list<StaticRouteProviderInterface> */

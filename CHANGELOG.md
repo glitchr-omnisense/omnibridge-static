@@ -2,6 +2,36 @@
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-14
+
+Incremental builds by dependency tracking: what the exporter can observe without the site's help
+now guards the cache ([docs/incremental.md](docs/incremental.md#what-the-exporter-sees-by-itself-the-build-record)).
+Backward compatible: no signature changed, `omnibridge-static.json` is the same file.
+
+### Added
+
+- The build record, `<cache>/omnibridge-static.build.json` (`Build\Record`), written beside the
+  cached answers by every export with a cache. It holds the package's code, the environment (the PHP
+  version, every extension and its version, every installed package but the root as
+  `version@reference`; `Build\Environment`), every PHP file the process loaded with its SHA-256, each
+  declared input's fingerprint, and each address rendered or reused with its role, fingerprint and
+  declared inputs. No date.
+- `Site::ignoreLoaded(...$patterns)`: loaded PHP files the record does not compare, such as the
+  application's own cache folder (`__DIR__.'/var/cache/*'`).
+- The export tells the declared inputs that changed since the last export (`changed since the last
+  export: 1 declared input (...)`).
+
+### Changed
+
+- An export with a cache is a full one, its summary saying why, when the cache's record does not vouch
+  for it: no record (a first export, a cache from 1.0.0, an export cut short), another format, another
+  version of the package, another PHP version, extension or installed package, or a PHP file the last
+  export loaded that changed or is gone. An undeclared PHP template or class change no longer leaves a
+  stale page in the cache. The first export into a fresh cache now reads `full (no record of an
+  earlier export in the cache)` instead of `incremental`; the files it writes are the same.
+- The record is removed when an export starts and written again when it ends: a cache that an
+  interrupted export filled is not trusted.
+
 ## [1.0.0] - 2026-11-13
 
 The first stable release: `composer require omnibridge/static` installs with Composer's default

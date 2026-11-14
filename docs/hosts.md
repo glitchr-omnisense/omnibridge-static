@@ -85,6 +85,13 @@ incremental in its writing and, with declared inputs, in its renderings
 which has none of the three options, a targeted or a full export goes through the plain command line,
 or `Cli::build()` with `['only' => '/news/*']` or `['full' => true]`.
 
+With a cache, the build record compares every PHP file the export loaded, the host's own compiled
+files among them. Leave the host's cache folder out, or every CI run that starts from a fresh one is a
+full export: `->ignoreLoaded($root.'/var/cache/*')` under Symfony, `->ignoreLoaded($root.'/bootstrap/cache/*',
+$root.'/storage/framework/*')` under Laravel. The sources they are compiled from (`config/`, the
+templates) are then declared in `Site::dependsOn()`
+([Incremental exports](incremental.md#the-applications-cache-folder-siteignoreloaded)).
+
 ## Calling Cli yourself
 
 ```php

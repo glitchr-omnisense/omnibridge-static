@@ -27,13 +27,14 @@ path segment cannot hold) is an `InvalidArgumentException`. Every setter returns
 | `sitemap(bool $sitemap = true)` | on | write `sitemap.xml` |
 | `githubPages(bool $githubPages = true)` | off | export for GitHub Pages ([GitHub Pages](github-pages.md)) |
 | `dependsOn(array $shared, ?\Closure $pages = null)` | none: every page rendered every time | what the renderings depend on: files, folders, glob patterns or values every page depends on (added to an earlier call's), and `fn (StaticPage $page): ?array` a page's own (null: not known) ([Incremental exports](incremental.md)) |
-| `cache(?string $dir)` | none | the folder the renderer's answers are kept in between exports, by fingerprint |
+| `cache(?string $dir)` | none | the folder the renderer's answers are kept in between exports, by fingerprint, with the record of the export that filled it |
+| `ignoreLoaded(string ...$patterns)` | none: every loaded PHP file compared | PHP files the build record does not compare, `fnmatch` patterns of absolute paths (the application's cache folder, `__DIR__.'/var/cache/*'`); added to an earlier call's ([Incremental exports](incremental.md#the-applications-cache-folder-siteignoreloaded)) |
 
 Read back: `basePath()` (`/repository`, `''` at the root), `origin()` (scheme, host, port, lower case),
 `customDomain()`, `isForGitHubPages()`, `providers()`, `renderer()`, `getPublicDir()`, `manifests()`,
 `copies()`, `notFoundPage()`, `dynamicHost()`, `normalisers()`, `followsResources()`,
 `writesSitemap()`, `getResourceAttributes()`, `isDynamic(string $path)`, `sharedInputs()`,
-`inputsOf(StaticPage $page)`, `cacheDir()`.
+`inputsOf(StaticPage $page)`, `cacheDir()`, `ignoredLoaded()`.
 
 ## StaticPage
 
@@ -103,3 +104,8 @@ summary), `withSummary()`.
   order), `page(StaticPage $page)` (null when a parameter is an object); `Build\ResponseCache`
   (`get()`, `put()`, `prune()`); `Build\Sync::apply($staging, $target, $last, $all)` (the staging
   folder moved into the target, the same bytes left, the rest removed).
+- `Build\Record`: the cache's `omnibridge-static.build.json` (`FILE`, `FORMAT`): `read($dir)` (null:
+  none, unreadable or of another format), `write($dir)`, `forget($dir)`, `distrust($code,
+  $environment, $ignore)` (why the cache cannot be trusted, or null), `changedInputs($inputs)`;
+  `Build\Environment`: `current()` (PHP version, extensions, installed packages but the root),
+  `loaded($ignore)` (the PHP files loaded, by SHA-256), `difference($earlier, $now)`.

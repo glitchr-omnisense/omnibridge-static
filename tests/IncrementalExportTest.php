@@ -2,11 +2,14 @@
 
 namespace Omnibridge\Static\Tests;
 
+use Omnibridge\Static\Build\Record;
 use Omnibridge\Static\Build\Summary;
 use Omnibridge\Static\Exporter;
 use Omnibridge\Static\Report;
 use Omnibridge\Static\Tests\Fixtures\ContentSite;
 use Omnibridge\Static\Tests\Fixtures\Folder;
+use Omnibridge\Static\StaticRouteProviderInterface;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -80,6 +83,180 @@ final class IncrementalExportTest extends TestCase
         $report = $this->incremental();
         self::assertSame([0, 7, 0, 12, 0], self::counts($report));
         self::assertCount(7, glob($this->root.'/cache/*.response') ?: [], 'the cache holds the answers of the last export, no more');
+    }
+
+    public function testTwoCleanBuildsAreTheSameByteForByte(): void
+    {
+        $second = sys_get_temp_dir().'/omnibridge-static-second-'.getmypid();
+        try {
+            (new Exporter())->export(ContentSite::site($this->root, cached: false), $this->out);
+            // The second with a cache of its own: what an export keeps aside changes nothing in its folder.
+            (new Exporter())->export(ContentSite::site($this->root), $second);
+
+            self::assertSame(Folder::tree($this->out), Folder::tree($second));
+            self::assertFileEquals($this->out.'/'.Exporter::REPORT, $second.'/'.Exporter::REPORT);
+            self::assertFileDoesNotExist($second.'/'.Record::FILE, 'the record stays in the cache');
+        } finally {
+            Folder::remove($second);
+        }
+    }
+
+    public function testADeclaredConfigurationChangeRendersEveryPageAgainAndSaysWhichInput(): void
+    {
+        $this->incremental();
+        ContentSite::put($this->root.'/config.json', '{"title": "Atelier Exemple, Strasbourg"}');
+
+        $lines = [];
+        $report = $this->incremental($lines);
+
+        self::assertSame(Summary::INCREMENTAL, $report->summary?->mode);
+        self::assertSame([7, 0, 5, 7, 0], self::counts($report), 'the four pages and 404.html carry the title; the redirection and the picture do not');
+        self::assertContains('changed since the last export: 1 declared input ('.$this->root.'/config.json)', $lines);
+        $this->assertSameAsAFullExport();
+    }
+
+    public function testAnUndeclaredPhpFileTheExportLoadedMakesTheNextExportAFullOne(): void
+    {
+        $this->incremental();
+        self::assertArrayHasKey($this->root.'/footer.php', self::record($this->root)['loaded'], 'the record lists the PHP files the export loaded');
+        ContentSite::put($this->root.'/footer.php', "<?php return '<footer>Atelier Exemple, 2026</footer>';\n");
+
+        $report = $this->incremental();
+
+        self::assertSame(Summary::FULL, $report->summary?->mode);
+        self::assertSame('a PHP file the earlier export loaded changed: '.$this->root.'/footer.php', $report->summary->why);
+        self::assertSame([7, 0, 12, 0, 0], self::counts($report), 'nothing taken from the cache, every file rewritten');
+        self::assertStringContainsString('Atelier Exemple, 2026', (string) file_get_contents($this->out.'/a/index.html'));
+        $this->assertSameAsAFullExport();
+
+        // The new record holds the new file: the export after it is incremental again.
+        $report = $this->incremental();
+        self::assertSame(Summary::INCREMENTAL, $report->summary?->mode);
+        self::assertSame([0, 7, 0, 12, 0], self::counts($report));
+    }
+
+    public function testAPhpFileTheExportLoadedThatIsGoneMakesTheNextExportAFullOne(): void
+    {
+        $this->incremental();
+        $record = self::record($this->root);
+        $record['loaded'][$this->root.'/gone.php'] = str_repeat('0', 64);
+        file_put_contents($this->root.'/cache/'.Record::FILE, json_encode($record));
+
+        $report = $this->incremental();
+
+        self::assertSame('a PHP file the earlier export loaded is gone: '.$this->root.'/gone.php', $report->summary?->why);
+        $this->assertSameAsAFullExport();
+    }
+
+    public function testALoadedFileTheSiteIgnoresIsNotCompared(): void
+    {
+        $export = fn (): Report => (new Exporter())->export(ContentSite::site($this->root)->ignoreLoaded($this->root.'/foot*'), $this->out);
+        $export();
+        self::assertArrayNotHasKey($this->root.'/footer.php', self::record($this->root)['loaded']);
+        // A file the application writes afresh at every boot with the same meaning (a compiled container
+        // and its build time): rewritten here with the same output.
+        ContentSite::put($this->root.'/footer.php', "<?php\n\n// Built at 12:00.\nreturn '<footer>Atelier Exemple</footer>';\n");
+        ContentSite::$renders = [];
+
+        $report = $export();
+
+        self::assertSame(Summary::INCREMENTAL, $report->summary?->mode);
+        self::assertSame([0, 7, 0, 12, 0], self::counts($report));
+    }
+
+    /** @return iterable<string, array{list<string>, mixed, string}> the record's entry changed, its new value, the reason */
+    public static function untrustedRecords(): iterable
+    {
+        yield 'another PHP version' => [['environment', 'php'], '8.1.0', 'PHP '.\PHP_VERSION.', the earlier export ran on 8.1.0'];
+        yield 'another extension' => [['environment', 'extensions', 'imaginary'], '1.0.0', 'the PHP extensions changed: imaginary'];
+        yield 'another package version' => [['environment', 'packages', 'vendor/package'], '1.0.0@abc', 'the installed packages changed: vendor/package'];
+        yield 'another version of omnibridge/static' => [['code'], 'another', 'the cache was filled by another version of omnibridge/static'];
+        yield 'another format' => [['format'], 0, 'no record of an earlier export in the cache'];
+        yield 'no record' => [[], null, 'no record of an earlier export in the cache'];
+    }
+
+    /** @param list<string> $entry */
+    #[DataProvider('untrustedRecords')]
+    public function testACacheItsRecordDoesNotVouchForGivesAFullExport(array $entry, mixed $value, string $why): void
+    {
+        $this->incremental();
+        file_put_contents($this->root.'/cache/'.Record::FILE, [] === $entry ? 'not a record' : json_encode(self::changed(self::record($this->root), $entry, $value)));
+        ContentSite::put($this->root.'/content/b.txt', 'Beta, again');
+
+        $report = $this->incremental();
+
+        self::assertSame(Summary::FULL, $report->summary?->mode);
+        self::assertSame($why, $report->summary->why);
+        self::assertSame([7, 0, 12, 0, 0], self::counts($report));
+        $this->assertSameAsAFullExport();
+        self::assertSame(Summary::INCREMENTAL, $this->incremental()->summary?->mode, 'the record written again');
+    }
+
+    public function testAnExportCutShortLeavesACacheTheNextExportDoesNotTrust(): void
+    {
+        $this->incremental();
+        $site = ContentSite::site($this->root)->provide(new class implements StaticRouteProviderInterface {
+            public function pages(): iterable
+            {
+                throw new \RuntimeException('The content cannot be read.');
+            }
+        });
+        try {
+            (new Exporter())->export($site, $this->out);
+            self::fail('the export went on');
+        } catch (\RuntimeException $e) {
+            self::assertSame('The content cannot be read.', $e->getMessage());
+        }
+        self::assertFileDoesNotExist($this->root.'/cache/'.Record::FILE);
+
+        $report = $this->incremental();
+
+        self::assertSame('no record of an earlier export in the cache', $report->summary?->why);
+        $this->assertSameAsAFullExport();
+    }
+
+    public function testADeletedPageIsRemovedFromTheFolderTheReportAndTheRecord(): void
+    {
+        $this->incremental();
+        self::assertContains('/c', array_column(self::record($this->root)['addresses'], 'path'));
+        unlink($this->root.'/content/c.txt');
+
+        $report = $this->incremental();
+
+        self::assertSame(Summary::INCREMENTAL, $report->summary?->mode);
+        self::assertSame(['/'], array_keys(ContentSite::$renders), 'the list alone: it showed the page');
+        self::assertSame([1, 5, 2, 9, 1], self::counts($report), 'index.html and sitemap.xml written, c/index.html removed');
+        self::assertDirectoryDoesNotExist($this->out.'/c');
+        self::assertArrayNotHasKey('/c', $report->pages);
+        self::assertNotContains('/c', array_column(self::record($this->root)['addresses'], 'path'));
+        $this->assertSameAsAFullExport();
+    }
+
+    public function testTheRecordSaysWhatEachAddressDependedOn(): void
+    {
+        $this->incremental();
+        $record = self::record($this->root);
+        $addresses = [];
+        foreach ($record['addresses'] as $address) {
+            $addresses[$address['role'].' '.$address['path']] = $address['inputs'];
+        }
+        ksort($addresses);
+
+        self::assertSame([
+            'not-found /404' => [],
+            'page /' => [$this->root.'/content'],
+            'page /a' => [$this->root.'/content/a.txt'],
+            'page /b' => [$this->root.'/content/b.txt'],
+            'page /c' => [$this->root.'/content/c.txt'],
+            'page /old' => [],
+            'resource /logo.png' => [],
+        ], $addresses);
+        self::assertSame(1, $record['format']);
+        self::assertSame(\PHP_VERSION, $record['environment']['php']);
+        self::assertArrayNotHasKey('omnibridge/static', $record['environment']['packages'], 'the root package is seen through the files it loads');
+        self::assertArrayHasKey('phpunit/phpunit', $record['environment']['packages']);
+        self::assertArrayHasKey($this->root.'/layout.html', $record['inputs']);
+        self::assertArrayHasKey($this->root.'/config.json', $record['inputs']);
     }
 
     public function testAnIncrementalExportRepairsWhateverTheFolderHolds(): void
@@ -184,13 +361,49 @@ final class IncrementalExportTest extends TestCase
         self::assertFileDoesNotExist(\dirname($this->out).'/.'.basename($this->out).'.staging', 'the staging folder is gone');
     }
 
-    private function incremental(): Report
+    /** @param list<string> $lines the lines the export logs */
+    private function incremental(array &$lines = []): Report
     {
         ContentSite::$renders = [];
-        $report = (new Exporter())->export(ContentSite::site($this->root), $this->out);
+        $report = (new Exporter(static function (string $line) use (&$lines): void {
+            $lines[] = $line;
+        }))->export(ContentSite::site($this->root), $this->out);
         self::assertSame([], $report->errors());
 
         return $report;
+    }
+
+    /**
+     * The cache's record, as JSON gives it.
+     *
+     * @return array{format: int, code: string, environment: array{php: string, extensions: array<string, string>, packages: array<string, string>}, loaded: array<string, string|null>, inputs: array<string, string>, addresses: list<array{path: string, role: string, fingerprint: string|null, inputs: list<string>|null}>}
+     */
+    private static function record(string $root): array
+    {
+        $record = json_decode((string) file_get_contents($root.'/cache/'.Record::FILE), true);
+        self::assertIsArray($record);
+
+        /** @var array{format: int, code: string, environment: array{php: string, extensions: array<string, string>, packages: array<string, string>}, loaded: array<string, string|null>, inputs: array<string, string>, addresses: list<array{path: string, role: string, fingerprint: string|null, inputs: list<string>|null}>} $record */
+        return $record;
+    }
+
+    /**
+     * An array with one entry, at the end of a path of keys, set.
+     *
+     * @param array<mixed> $array
+     * @param list<string> $keys
+     *
+     * @return array<mixed>
+     */
+    private static function changed(array $array, array $keys, mixed $value): array
+    {
+        $key = array_shift($keys);
+        if (null === $key) {
+            return $array;
+        }
+        $array[$key] = [] === $keys ? $value : self::changed(\is_array($array[$key] ?? null) ? $array[$key] : [], $keys, $value);
+
+        return $array;
     }
 
     /** The folder as a full export of the same files gives it, into an empty folder, without a cache. */

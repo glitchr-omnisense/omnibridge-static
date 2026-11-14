@@ -13,19 +13,24 @@ use Omnibridge\Static\StaticResponse;
  * rendered in, one page per file of content/ (its route list follows the
  * folder), a home page that lists them, a redirection, a page for unknown
  * addresses, a picture the application serves, and a public style sheet
- * that refers to a font. Each rendering is counted.
+ * that refers to a font. The site's title comes from config.json, a
+ * declared input; the footer from footer.php, a PHP file the renderer
+ * includes and declares nowhere (the exporter sees it loaded). Each
+ * rendering is counted.
  */
 final class ContentSite
 {
     /** @var array<string, int> path => how many times it was rendered */
     public static array $renders = [];
 
-    /** A fresh folder: layout.html, content/{a,b,c}.txt, public/style.css and its font. */
+    /** A fresh folder: layout.html, config.json, footer.php, content/{a,b,c}.txt, public/style.css and its font. */
     public static function make(string $root): void
     {
         Folder::remove($root);
         foreach ([
-            'layout.html' => '<!DOCTYPE html><html><head><link rel="stylesheet" href="/style.css"></head><body>{body}</body></html>',
+            'layout.html' => '<!DOCTYPE html><html><head><title>{title}</title><link rel="stylesheet" href="/style.css"></head><body>{body}{footer}</body></html>',
+            'config.json' => '{"title": "Atelier Exemple"}',
+            'footer.php' => "<?php return '<footer>Atelier Exemple</footer>';\n",
             'content/a.txt' => 'Alpha',
             'content/b.txt' => 'Beta',
             'content/c.txt' => 'Gamma',
@@ -52,7 +57,13 @@ final class ContentSite
     {
         $names = array_map(static fn (string $file): string => basename($file, '.txt'), glob($root.'/content/*.txt') ?: []);
         sort($names);
-        $layout = static fn (string $body): string => str_replace('{body}', $body, (string) file_get_contents($root.'/layout.html'));
+        $layout = static function (string $body) use ($root): string {
+            $config = json_decode((string) file_get_contents($root.'/config.json'), true);
+            $title = \is_array($config) && \is_string($config['title'] ?? null) ? $config['title'] : '';
+            $footer = include $root.'/footer.php';
+
+            return str_replace(['{title}', '{body}', '{footer}'], [$title, $body, \is_string($footer) ? $footer : ''], (string) file_get_contents($root.'/layout.html'));
+        };
 
         $render = static function (StaticPage $page) use ($root, $names, $layout): StaticResponse {
             self::$renders[$page->path] = (self::$renders[$page->path] ?? 0) + 1;
@@ -80,7 +91,7 @@ final class ContentSite
             ->copy('style.css')
             ->notFound('/404');
         if ($declared) {
-            $site->dependsOn([$root.'/layout.html'], static fn (StaticPage $page): array => match (true) {
+            $site->dependsOn([$root.'/layout.html', $root.'/config.json'], static fn (StaticPage $page): array => match (true) {
                 // The list: every page's title.
                 '/' === $page->path => [$root.'/content'],
                 is_file($root.'/content'.$page->path.'.txt') => [$root.'/content'.$page->path.'.txt'],

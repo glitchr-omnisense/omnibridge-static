@@ -194,7 +194,14 @@ twice) and a page-by-page comparison with the dynamic site find these.
   rendered again; `--only=/news/*` renders the addresses it names whatever
   the cache holds (a targeted rebuild), `--full` everything. A full and an
   incremental export give the same folder, byte for byte
-  ([docs/incremental.md](docs/incremental.md)).
+  ([docs/incremental.md](docs/incremental.md)). The cache keeps the record
+  of the export that filled it (`omnibridge-static.build.json`): the PHP
+  files the process loaded, the PHP version and extensions, the installed
+  packages, each address's inputs. When any of these changed, or the record
+  is missing, the export is a full one and says why (`full (a PHP file the
+  earlier export loaded changed: /app/templates/post.php)`).
+  `Site::ignoreLoaded(__DIR__.'/var/cache/*')` leaves the application's own
+  cache folder out of the comparison.
 
 ## Deploying to GitHub Pages
 
@@ -306,8 +313,19 @@ and `--full` ([docs/hosts.md](docs/hosts.md)).
 
 ## Verified, and not
 
-Verified (2026-10-24, and below 2026-11-13):
+Verified (2026-10-24, and below 2026-11-13 and 2026-11-14):
 
+- The build record (2026-11-14, 1.1.0): the suite, 98 tests, 460
+  assertions, green in PHP 8.2 (`omnibridge-core:php8.2`) and 8.4
+  (`ghcr.io/glitchr-studio/php:8.4`), PHPStan at max with no baseline entry.
+  `IncrementalExportTest` asserts that two clean builds give the same tree
+  and report, and that after each kind of change the incremental export
+  gives a clean build's tree and report: a declared configuration file, a
+  PHP file the renderer includes and declares nowhere (full), a PHP file of
+  the record gone (full), another PHP version, extension, package, package
+  code or record format, no record, an export cut short (full each time,
+  with its reason), a deleted page (gone from the folder, the report and
+  the record). An untouched export renders nothing.
 - Incremental exports (2026-11-13): the suite, 84 tests, 348 assertions, green in PHP 8.2
   and 8.4, PHPStan at max with no baseline entry. `IncrementalExportTest` asserts that a full
   and an incremental export give the same tree after a changed page, a changed route list, a
@@ -373,13 +391,22 @@ Not done, or not verified:
   calls it from the static site gets a 404. It needs the dynamic host
   (cross-origin, with no session token) or a static JSON the application
   exports at a path with an extension.
-- Incremental builds: the writing is always incremental; the renderings only
-  where the site declares their inputs (`Site::dependsOn()`), which nothing
-  checks: an undeclared dependency gives a stale page from the cache. A
-  dependency between pages is known only through the files they declare. The
-  Symfony and Artisan commands pass `--cache`, `--only` and `--full` from
-  omnibridge/symfony 1.1.0 and omnibridge/laravel 1.1.0 on (each bridge's own
-  test); neither has made an incremental export of a whole site.
+- Incremental builds (done; what they cannot see): the writing is always
+  incremental; the renderings where the site declares their inputs
+  (`Site::dependsOn()`) and keeps a cache. From 1.1.0 the cache's build record
+  makes an export a full one when a PHP file the last export loaded changed,
+  or the PHP version, an extension or an installed package. What a renderer
+  reads without loading it as PHP (a Twig or Blade template, Markdown, YAML,
+  a database) is seen only through the declared inputs: an input left out
+  still gives a stale page from the cache. A dependency between pages is
+  known only through the files they declare. The record's paths are
+  absolute, so a moved checkout makes a full export. The build record has
+  not run on a whole site: the Omnisense website's workflow and `static.php`
+  need `Site::ignoreLoaded()` for `var/cache` first
+  ([docs/incremental.md](docs/incremental.md)). The Symfony and Artisan
+  commands pass `--cache`, `--only` and `--full` from omnibridge/symfony
+  1.1.0 and omnibridge/laravel 1.1.0 on (each bridge's own test); neither has
+  made an incremental export of a whole site.
 - Assets are copied as the bundler fingerprinted them; the exporter
   fingerprints nothing itself, and records each file's checksum.
 - A site under a folder of its origin moves what the export reads and the
@@ -390,9 +417,10 @@ Not done, or not verified:
   moved under the folder too.
 - GitHub Pages' own behaviour (the slash redirection, 404.html at any depth)
   was reproduced with nginx, not observed on Pages.
-- From 1.0.0 the package installs with Composer's default stability
-  (`composer require omnibridge/static`), checked on 2026-11-13 in an empty
-  project with this checkout presented as 1.0.0, before the tag. Neither
+- From 1.0.0 (tagged at e0f3261) the package installs with Composer's
+  default stability (`composer require omnibridge/static`), checked on
+  2026-11-13 in an empty project with this checkout presented as 1.0.0,
+  before the tag. Neither
   wrapper has run from an installed package; the Laravel command has not
   exported a whole site.
 - The dev environment's 404 page is Symfony's exception page, which differs

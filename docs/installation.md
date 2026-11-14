@@ -39,7 +39,7 @@ omnibridge-static check <dist>
 | `--verify` | off | every page rendered twice; a page that differs is an error (`not-deterministic`); a page taken from the cache is not rendered, so not verified (`--full --verify` verifies them all) |
 | `--cache=` | none (`Site::cache()`) | the folder the renderer's answers are kept in: with the inputs the site declares (`Site::dependsOn()`), a page whose inputs did not change is not rendered again ([Incremental exports](incremental.md)) |
 | `--only=` | none | comma-separated path patterns (`fnmatch`, `*` crosses slashes) rendered whatever the cache holds: a targeted rebuild; any other address is reused only when its declared inputs prove it unaffected |
-| `--full` | off | nothing taken from the cache, every file rewritten; forced when the earlier export was made by another version of the package |
+| `--full` | off | nothing taken from the cache, every file rewritten; forced when the earlier export was made by another version of the package, or when the cache's build record does not vouch for it (none, another environment, a loaded PHP file changed: [Incremental exports](incremental.md#what-the-exporter-sees-by-itself-the-build-record)) |
 | `--strict` | off | a warning fails the build too |
 | `--quiet` | off | no progress lines; of the diagnostics, the errors only; the counts and the summary line stay |
 | `check <dist>` | `dist` | every file of the report there with its checksum, no file more, and, for a site under a folder of its origin, no internal address outside that folder |

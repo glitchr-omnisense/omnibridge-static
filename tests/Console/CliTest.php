@@ -72,7 +72,7 @@ final class CliTest extends TestCase
             return (string) end($this->lines);
         };
         try {
-            self::assertSame('incremental: 7 rendered, 0 reused; 12 written, 0 unchanged, 0 removed', $build());
+            self::assertSame('full (no record of an earlier export in the cache): 7 rendered, 0 reused; 12 written, 0 unchanged, 0 removed', $build());
             self::assertSame('incremental: 0 rendered, 7 reused; 0 written, 12 unchanged, 0 removed', $build());
             self::assertSame('incremental: 2 rendered, 5 reused; 0 written, 12 unchanged, 0 removed', $build('--only=/a, /b'));
             self::assertSame('full (asked): 7 rendered, 0 reused; 12 written, 0 unchanged, 0 removed', $build('--full'));
